@@ -15,9 +15,9 @@
 - [x] Refactor for reusable components (DRY)
 - [x] Add input validation & sanitation
 - [x] Implement error handling
-- [ ] Add general logging
-- [ ] Add error logging (Sentry, ELK, etc.)
-- [ ] Secure configuration (.env or secrets manager)
+- [x] Add general logging
+- [x] Add error logging (Sentry, ELK, etc.)
+- [x] Secure configuration (.env or secrets manager)
 - [ ] Add command-line interface (if needed)
 - [ ] Build GUI or frontend (CLI application by design)
 - [ ] Add accessibility & localization support (CLI application)

@@ -19,4 +19,26 @@ export { RPCProvider } from './rpc';
 export { WalletConnector } from './wallet';
 export { LicenseVerifier } from './license';
 export { MintingPortal } from './minting';
-export { Cache } from './utils';
+
+// Export utilities
+export {
+  Cache,
+  Logger,
+  LogLevel,
+  logger,
+  ErrorReporter,
+  errorReporter,
+  ConfigManager,
+  configManager,
+  createConfigFromEnv,
+  ENV_KEYS,
+} from './utils';
+
+export type {
+  LoggerConfig,
+  LogEntry,
+  ErrorReporterConfig,
+  ErrorReport,
+  Breadcrumb,
+  ExtendedGLWMConfig,
+} from './utils';
