@@ -6,3 +6,5 @@ export { ErrorReporter, errorReporter } from './ErrorReporter';
 export type { ErrorReporterConfig, ErrorReport, Breadcrumb } from './ErrorReporter';
 export { ConfigManager, configManager, createConfigFromEnv, ENV_KEYS } from './Config';
 export type { ExtendedGLWMConfig } from './Config';
+export { Metrics, MetricNames, metrics } from './Metrics';
+export type { MetricsConfig, MetricEntry, MetricType, TimingMeasurement } from './Metrics';
