@@ -37,7 +37,7 @@
 # Build, Deployment & Monitoring
 - [x] Create automated build scripts (Makefile, .bat, shell)
 - [x] Set up CI/CD pipeline (GitHub Actions, Jenkins, etc.)
-- [ ] Configure environment-specific settings (dev/stage/prod)
+- [x] Configure environment-specific settings (dev/stage/prod)
 - [x] Build distributable packages (Dockerfile, zip, exe)
 - [ ] Create installer or assembly file (.bat, setup wizard)
 - [x] Implement semantic versioning (v1.0.0)
@@ -50,10 +50,10 @@
 - [ ] Conduct manual exploratory testing
 - [ ] Peer review / code audit
 - [ ] Run penetration test (internal or 3rd-party)
-- [ ] Document APIs (Swagger / Postman)
+- [x] Document APIs (Swagger / Postman)
 - [ ] Create architecture & data flow diagrams
 - [ ] Finalize user documentation (README, FAQ, troubleshooting)
-- [ ] Add license file
-- [ ] Write changelog
+- [x] Add license file
+- [x] Write changelog
 - [ ] Perform compliance review (GDPR, HIPAA, etc.)
 - [ ] Tag release & archive build artifacts
