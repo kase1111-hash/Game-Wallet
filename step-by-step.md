@@ -1,20 +1,20 @@
 # Foundation & Planning
 - [x] Review spec sheet & confirm requirements
-- [ ] Define user stories & acceptance criteria
+- [x] Define user stories & acceptance criteria
 - [x] Choose tech stack & dependencies
 - [x] Design architecture (system, data flow, API)
 - [x] Initialize version control (Git)
 - [x] Set up project structure (src/, tests/, docs/)
 - [x] Define coding conventions & style guide
 - [x] Create dependency manifest (package.json, requirements.txt)
-- [ ] Configure environment management (Docker, venv, etc.)
+- [x] Configure environment management (Docker, venv, etc.)
 - [x] Write initial README.md
 
 # Core Implementation
-- [ ] Implement core logic per spec
-- [ ] Refactor for reusable components (DRY)
-- [ ] Add input validation & sanitation
-- [ ] Implement error handling
+- [x] Implement core logic per spec
+- [x] Refactor for reusable components (DRY)
+- [x] Add input validation & sanitation
+- [x] Implement error handling
 - [ ] Add general logging
 - [ ] Add error logging (Sentry, ELK, etc.)
 - [ ] Secure configuration (.env or secrets manager)
@@ -38,9 +38,9 @@
 - [ ] Create automated build scripts (Makefile, .bat, shell)
 - [ ] Set up CI/CD pipeline (GitHub Actions, Jenkins, etc.)
 - [ ] Configure environment-specific settings (dev/stage/prod)
-- [ ] Build distributable packages (Dockerfile, zip, exe)
+- [x] Build distributable packages (Dockerfile, zip, exe)
 - [ ] Create installer or assembly file (.bat, setup wizard)
-- [ ] Implement semantic versioning (v1.0.0)
+- [x] Implement semantic versioning (v1.0.0)
 - [ ] Automate deployment process
 - [ ] Add telemetry & metrics collection
 - [ ] Monitor uptime, errors, and performance

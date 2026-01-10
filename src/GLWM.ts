@@ -12,12 +12,24 @@ import type {
   MintConfig,
   MintRequest,
   MintResult,
+  CacheConfig,
 } from './types';
+import { RPCProvider } from './rpc';
+import { WalletConnector } from './wallet';
+import { LicenseVerifier } from './license';
+import { MintingPortal } from './minting';
+import { Cache } from './utils';
 
 type StateListener = (state: GLWMState) => void;
 type EventHandler<T extends GLWMEvent['type']> = (
   payload: Extract<GLWMEvent, { type: T }>
 ) => void;
+
+const DEFAULT_CACHE_CONFIG: CacheConfig = {
+  enabled: true,
+  ttlSeconds: 300, // 5 minutes
+  storageKey: 'glwm',
+};
 
 /**
  * Main entry point for GLWM SDK
@@ -38,14 +50,15 @@ type EventHandler<T extends GLWMEvent['type']> = (
 export class GLWM {
   private config: GLWMConfig;
   private state: GLWMState = { status: 'uninitialized' };
-  private walletSession: WalletSession = {
-    connection: null,
-    isConnected: false,
-    isConnecting: false,
-    error: null,
-  };
   private stateListeners: Set<StateListener> = new Set();
   private eventHandlers: Map<string, Set<EventHandler<GLWMEvent['type']>>> = new Map();
+
+  // Core components
+  private rpcProvider: RPCProvider | null = null;
+  private walletConnector: WalletConnector | null = null;
+  private licenseVerifier: LicenseVerifier | null = null;
+  private mintingPortal: MintingPortal | null = null;
+  private cache: Cache | null = null;
 
   private static readonly VERSION = '0.1.0';
 
@@ -68,11 +81,57 @@ export class GLWM {
   async initialize(): Promise<void> {
     this.setState({ status: 'initializing' });
 
-    // TODO: Initialize RPC provider
-    // TODO: Set up event listeners
-    // TODO: Restore cached wallet session if available
+    try {
+      // Initialize cache
+      this.cache = new Cache(this.config.cacheConfig ?? DEFAULT_CACHE_CONFIG);
 
-    this.setState({ status: 'awaiting_wallet' });
+      // Initialize RPC provider
+      this.rpcProvider = new RPCProvider(this.config.rpcProvider, this.config.chainId);
+      await this.rpcProvider.initialize();
+
+      // Initialize wallet connector
+      this.walletConnector = new WalletConnector(this.config.chainId, {
+        onSessionChange: (session) => {
+          if (session.isConnected && session.connection) {
+            this.emitEvent({ type: 'WALLET_CONNECTED', connection: session.connection });
+            this.config.onWalletConnected?.(session.connection);
+          } else if (!session.isConnected) {
+            this.emitEvent({ type: 'WALLET_DISCONNECTED' });
+          }
+        },
+        onChainMismatch: (current, expected) => {
+          const error = this.createError(
+            'CHAIN_MISMATCH',
+            `Connected to chain ${current}, but expected ${expected}`
+          );
+          this.config.onError?.(error);
+        },
+      });
+
+      // Initialize license verifier
+      this.licenseVerifier = new LicenseVerifier(this.rpcProvider, this.config.licenseContract);
+      this.licenseVerifier.initialize();
+
+      // Initialize minting portal
+      this.mintingPortal = new MintingPortal(this.config.mintingPortal, {
+        onMintStarted: (txHash) => {
+          this.setState({ status: 'minting_in_progress', transactionHash: txHash });
+          this.emitEvent({ type: 'MINT_STARTED', transactionHash: txHash });
+        },
+        onMintCompleted: (result) => {
+          this.emitEvent({ type: 'MINT_COMPLETED', result });
+        },
+        onClose: () => {
+          this.emitEvent({ type: 'CLOSE_MINTING_PORTAL' });
+        },
+      });
+
+      this.setState({ status: 'awaiting_wallet' });
+    } catch (error) {
+      const glwmError = this.handleError(error);
+      this.setState({ status: 'error', error: glwmError });
+      throw glwmError;
+    }
   }
 
   /**
@@ -80,9 +139,14 @@ export class GLWM {
    */
   async dispose(): Promise<void> {
     await this.disconnectWallet();
-    this.closeMintingPortal();
+    this.mintingPortal?.close();
     this.stateListeners.clear();
     this.eventHandlers.clear();
+    this.rpcProvider = null;
+    this.walletConnector = null;
+    this.licenseVerifier = null;
+    this.mintingPortal = null;
+    this.cache = null;
     this.setState({ status: 'uninitialized' });
   }
 
@@ -99,7 +163,8 @@ export class GLWM {
    */
   async verifyAndPlay(): Promise<LicenseVerificationResult> {
     // Ensure wallet is connected
-    if (!this.walletSession.isConnected) {
+    const session = this.getWalletSession();
+    if (!session.isConnected) {
       await this.connectWallet();
     }
 
@@ -107,14 +172,26 @@ export class GLWM {
     const result = await this.verifyLicense();
 
     if (result.isValid) {
+      if (result.license) {
+        this.setState({ status: 'license_valid', license: result.license });
+      }
       return result;
     }
 
     // No valid license - open minting portal
     await this.openMintingPortal();
 
+    // Wait for portal to close (user minted or cancelled)
+    await this.waitForPortalClose();
+
     // After minting portal closes, verify again
-    return this.verifyLicenseFresh();
+    const postMintResult = await this.verifyLicenseFresh();
+
+    if (postMintResult.isValid && postMintResult.license) {
+      this.setState({ status: 'license_valid', license: postMintResult.license });
+    }
+
+    return postMintResult;
   }
 
   // ============================================
@@ -128,30 +205,39 @@ export class GLWM {
    * @param preferredProvider - Optional preferred wallet provider
    */
   async connectWallet(preferredProvider?: WalletProvider): Promise<WalletConnection> {
+    this.ensureInitialized();
+
     const provider = preferredProvider ?? 'metamask';
     this.setState({ status: 'connecting_wallet', provider });
 
-    this.walletSession = {
-      ...this.walletSession,
-      isConnecting: true,
-      error: null,
-    };
+    try {
+      const connection = await this.walletConnector!.connect(preferredProvider);
 
-    // TODO: Implement actual wallet connection logic
-    throw new Error('Wallet connection not yet implemented');
+      // Set wallet address in minting portal
+      this.mintingPortal?.setWalletAddress(connection.address);
+
+      return connection;
+    } catch (error) {
+      const glwmError = this.handleError(error);
+      this.setState({ status: 'error', error: glwmError });
+      throw glwmError;
+    }
   }
 
   /**
    * Disconnect current wallet session
    */
   async disconnectWallet(): Promise<void> {
-    this.walletSession = {
-      connection: null,
-      isConnected: false,
-      isConnecting: false,
-      error: null,
-    };
-    this.emitEvent({ type: 'WALLET_DISCONNECTED' });
+    if (this.walletConnector) {
+      // Clear cached verification before disconnecting
+      const session = this.getWalletSession();
+      if (session.connection) {
+        this.cache?.clearVerification(session.connection.address);
+      }
+
+      await this.walletConnector.disconnect();
+    }
+
     this.setState({ status: 'awaiting_wallet' });
   }
 
@@ -159,46 +245,46 @@ export class GLWM {
    * Get current wallet connection status
    */
   getWalletSession(): WalletSession {
-    return { ...this.walletSession };
+    if (!this.walletConnector) {
+      return {
+        connection: null,
+        isConnected: false,
+        isConnecting: false,
+        error: null,
+      };
+    }
+    return this.walletConnector.getSession();
   }
 
   /**
    * Check if a specific wallet provider is available
    */
   isProviderAvailable(provider: WalletProvider): boolean {
-    // TODO: Implement provider detection
-    switch (provider) {
-      case 'metamask':
-        return typeof window !== 'undefined' && 'ethereum' in window;
-      case 'walletconnect':
-        return true; // WalletConnect is always available as it doesn't require an extension
-      default:
-        return false;
+    if (!this.walletConnector) {
+      // Fallback detection
+      if (typeof window === 'undefined') return provider === 'walletconnect';
+      if (provider === 'metamask') return 'ethereum' in window;
+      return false;
     }
+    return this.walletConnector.isProviderAvailable(provider);
   }
 
   /**
    * Get list of available wallet providers
    */
   getAvailableProviders(): WalletProvider[] {
-    const providers: WalletProvider[] = [];
-    const allProviders: WalletProvider[] = ['metamask', 'walletconnect', 'phantom', 'coinbase'];
-
-    for (const provider of allProviders) {
-      if (this.isProviderAvailable(provider)) {
-        providers.push(provider);
-      }
+    if (!this.walletConnector) {
+      return [];
     }
-
-    return providers;
+    return this.walletConnector.getAvailableProviders();
   }
 
   /**
    * Request chain switch if connected to wrong network
    */
-  async switchChain(_chainId: ChainId): Promise<void> {
-    // TODO: Implement chain switching
-    throw new Error('Chain switching not yet implemented');
+  async switchChain(chainId: ChainId): Promise<void> {
+    this.ensureInitialized();
+    await this.walletConnector!.switchChain(chainId);
   }
 
   // ============================================
@@ -210,39 +296,72 @@ export class GLWM {
    * Uses cache if available and not expired
    */
   async verifyLicense(): Promise<LicenseVerificationResult> {
-    if (!this.walletSession.connection) {
+    this.ensureInitialized();
+
+    const session = this.getWalletSession();
+    if (!session.connection) {
       throw this.createError('WALLET_DISCONNECTED', 'No wallet connected');
     }
 
-    this.setState({ status: 'verifying_license', address: this.walletSession.connection.address });
+    const address = session.connection.address;
+    this.setState({ status: 'verifying_license', address });
 
-    // TODO: Check cache first
-    // TODO: Implement actual license verification
-    throw new Error('License verification not yet implemented');
+    // Check cache first
+    const cached = this.cache?.getVerification(address);
+    if (cached) {
+      this.emitEvent({ type: 'LICENSE_VERIFIED', result: cached });
+      this.config.onLicenseVerified?.(cached);
+      return cached;
+    }
+
+    try {
+      const result = await this.licenseVerifier!.verifyLicense(address);
+
+      // Cache the result
+      this.cache?.setVerification(address, result);
+
+      this.emitEvent({ type: 'LICENSE_VERIFIED', result });
+      this.config.onLicenseVerified?.(result);
+
+      if (result.isValid && result.license) {
+        this.setState({ status: 'license_valid', license: result.license });
+      } else {
+        this.setState({ status: 'no_license', address });
+      }
+
+      return result;
+    } catch (error) {
+      const glwmError = this.handleError(error);
+      this.setState({ status: 'error', error: glwmError });
+      throw glwmError;
+    }
   }
 
   /**
    * Force fresh verification, bypassing cache
    */
   async verifyLicenseFresh(): Promise<LicenseVerificationResult> {
-    // TODO: Clear cache entry
+    const session = this.getWalletSession();
+    if (session.connection) {
+      this.cache?.clearVerification(session.connection.address);
+    }
     return this.verifyLicense();
   }
 
   /**
    * Check license for arbitrary address (read-only)
    */
-  async checkLicenseForAddress(_address: string): Promise<LicenseVerificationResult> {
-    // TODO: Implement license check for arbitrary address
-    throw new Error('License check not yet implemented');
+  async checkLicenseForAddress(address: string): Promise<LicenseVerificationResult> {
+    this.ensureInitialized();
+    return this.licenseVerifier!.verifyLicense(address);
   }
 
   /**
    * Get full license details including metadata
    */
-  async getLicenseDetails(_tokenId: string): Promise<LicenseNFT> {
-    // TODO: Implement license details fetching
-    throw new Error('License details fetching not yet implemented');
+  async getLicenseDetails(tokenId: string): Promise<LicenseNFT> {
+    this.ensureInitialized();
+    return this.licenseVerifier!.getLicenseById(tokenId);
   }
 
   /**
@@ -250,8 +369,14 @@ export class GLWM {
    * (For multi-license scenarios)
    */
   async getAllLicenses(): Promise<LicenseNFT[]> {
-    // TODO: Implement fetching all licenses
-    throw new Error('Fetching all licenses not yet implemented');
+    this.ensureInitialized();
+
+    const session = this.getWalletSession();
+    if (!session.connection) {
+      throw this.createError('WALLET_DISCONNECTED', 'No wallet connected');
+    }
+
+    return this.licenseVerifier!.getAllLicenses(session.connection.address);
   }
 
   // ============================================
@@ -262,20 +387,23 @@ export class GLWM {
    * Open the minting portal
    */
   async openMintingPortal(): Promise<void> {
+    this.ensureInitialized();
+
     this.setState({ status: 'minting_portal_open' });
     this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
 
-    // TODO: Implement portal opening based on config.mintingPortal.mode
-    throw new Error('Minting portal not yet implemented');
+    await this.mintingPortal!.open();
   }
 
   /**
    * Close the minting portal
    */
   closeMintingPortal(): void {
-    this.emitEvent({ type: 'CLOSE_MINTING_PORTAL' });
-    if (this.walletSession.connection) {
-      this.setState({ status: 'no_license', address: this.walletSession.connection.address });
+    this.mintingPortal?.close();
+
+    const session = this.getWalletSession();
+    if (session.connection) {
+      this.setState({ status: 'no_license', address: session.connection.address });
     } else {
       this.setState({ status: 'awaiting_wallet' });
     }
@@ -285,8 +413,10 @@ export class GLWM {
    * Get current mint configuration and pricing
    */
   async getMintConfig(): Promise<MintConfig> {
-    // TODO: Implement mint config fetching
-    throw new Error('Mint config fetching not yet implemented');
+    this.ensureInitialized();
+
+    // This would typically query the contract or an API
+    throw new Error('getMintConfig not yet implemented - requires contract ABI');
   }
 
   /**
@@ -294,8 +424,10 @@ export class GLWM {
    * Most implementations should use openMintingPortal() instead
    */
   async mint(_request: MintRequest): Promise<MintResult> {
-    // TODO: Implement minting
-    throw new Error('Minting not yet implemented');
+    this.ensureInitialized();
+
+    // This would execute a mint transaction directly
+    throw new Error('Direct minting not yet implemented - use openMintingPortal()');
   }
 
   // ============================================
@@ -342,7 +474,7 @@ export class GLWM {
    * Clear local cache
    */
   clearCache(): void {
-    // TODO: Implement cache clearing
+    this.cache?.clearAll();
   }
 
   /**
@@ -390,6 +522,12 @@ export class GLWM {
   // PRIVATE METHODS
   // ============================================
 
+  private ensureInitialized(): void {
+    if (this.state.status === 'uninitialized') {
+      throw this.createError('CONFIGURATION_ERROR', 'SDK not initialized. Call initialize() first.');
+    }
+  }
+
   private setState(newState: GLWMState): void {
     this.state = newState;
     for (const listener of this.stateListeners) {
@@ -407,10 +545,45 @@ export class GLWM {
   }
 
   private createError(code: GLWMError['code'], message: string, recoverable = true): GLWMError {
-    return {
+    const error: GLWMError = {
       code,
       message,
       recoverable,
     };
+    this.config.onError?.(error);
+    return error;
+  }
+
+  private handleError(error: unknown): GLWMError {
+    if (this.isGLWMError(error)) {
+      return error;
+    }
+
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return this.createError('NETWORK_ERROR', message);
+  }
+
+  private isGLWMError(error: unknown): error is GLWMError {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      'message' in error &&
+      'recoverable' in error
+    );
+  }
+
+  private waitForPortalClose(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.mintingPortal?.isPortalOpen()) {
+        resolve();
+        return;
+      }
+
+      const unsubscribe = this.on('CLOSE_MINTING_PORTAL', () => {
+        unsubscribe();
+        resolve();
+      });
+    });
   }
 }
