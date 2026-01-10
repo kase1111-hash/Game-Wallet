@@ -27,7 +27,7 @@
 - [x] Write integration tests
 - [x] Write system/acceptance tests
 - [x] Add regression test suite
-- [ ] Conduct performance testing (load, stress)
+- [x] Conduct performance testing (load, stress)
 - [x] Perform security checks (input, encryption, tokens)
 - [ ] Perform exploit testing (SQLi, XSS, overflow)
 - [ ] Check for backdoors & unauthorized access
@@ -55,5 +55,5 @@
 - [x] Finalize user documentation (README, FAQ, troubleshooting)
 - [x] Add license file
 - [x] Write changelog
-- [ ] Perform compliance review (GDPR, HIPAA, etc.)
+- [x] Perform compliance review (GDPR, HIPAA, etc.)
 - [x] Tag release & archive build artifacts
