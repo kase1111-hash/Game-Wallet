@@ -121,7 +121,10 @@ export class MintingPortal {
    */
   private async openIframe(): Promise<void> {
     if (typeof document === 'undefined') {
-      throw this.createError('CONFIGURATION_ERROR', 'Iframe mode not supported in this environment');
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        'Iframe mode not supported in this environment'
+      );
     }
 
     // Create overlay
@@ -205,7 +208,10 @@ export class MintingPortal {
    */
   private openRedirect(): void {
     if (typeof window === 'undefined') {
-      throw this.createError('CONFIGURATION_ERROR', 'Redirect mode not supported in this environment');
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        'Redirect mode not supported in this environment'
+      );
     }
 
     const url = new URL(this.buildPortalUrl());

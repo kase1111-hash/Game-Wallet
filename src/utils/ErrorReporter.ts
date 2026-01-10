@@ -1,5 +1,5 @@
 import type { GLWMError } from '../types';
-import { logger, LogLevel } from './Logger';
+import { logger } from './Logger';
 
 /**
  * Error reporter configuration
@@ -254,10 +254,7 @@ export class ErrorReporter {
   /**
    * Wrap a function to automatically capture errors
    */
-  wrap<T extends (...args: unknown[]) => unknown>(
-    fn: T,
-    context?: Record<string, unknown>
-  ): T {
+  wrap<T extends (...args: unknown[]) => unknown>(fn: T, context?: Record<string, unknown>): T {
     const reporter = this;
     return function (this: unknown, ...args: unknown[]) {
       try {
@@ -287,9 +284,7 @@ export class ErrorReporter {
 
     try {
       // Parse Sentry DSN
-      const dsnMatch = this.config.dsn.match(
-        /^https?:\/\/([^@]+)@([^/]+)\/(.+)$/
-      );
+      const dsnMatch = this.config.dsn.match(/^https?:\/\/([^@]+)@([^/]+)\/(.+)$/);
       if (!dsnMatch) {
         logger.warn('Invalid Sentry DSN format');
         return;
@@ -311,9 +306,10 @@ export class ErrorReporter {
         exception: {
           values: [
             {
-              type: report.error.name ?? 'Error',
+              type: report.error instanceof Error ? report.error.name : 'GLWMError',
               value: report.message,
-              stacktrace: report.error instanceof Error ? this.parseStacktrace(report.error) : undefined,
+              stacktrace:
+                report.error instanceof Error ? this.parseStacktrace(report.error) : undefined,
             },
           ],
         },
@@ -368,7 +364,9 @@ export class ErrorReporter {
   /**
    * Parse error stacktrace for Sentry format
    */
-  private parseStacktrace(error: Error): { frames: Array<{ filename?: string; lineno?: number; function?: string }> } | undefined {
+  private parseStacktrace(
+    error: Error
+  ): { frames: Array<{ filename?: string; lineno?: number; function?: string }> } | undefined {
     if (!error.stack) {
       return undefined;
     }

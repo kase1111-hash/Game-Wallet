@@ -66,10 +66,7 @@ export class RPCProvider {
     for (const provider of allProviders) {
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-          const result = await Promise.race([
-            fn(provider),
-            this.createTimeoutPromise<T>(timeout),
-          ]);
+          const result = await Promise.race([fn(provider), this.createTimeoutPromise<T>(timeout)]);
           return result;
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));

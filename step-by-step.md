@@ -23,21 +23,21 @@
 - [ ] Add accessibility & localization support (CLI application)
 
 # Testing & Validation
-- [ ] Write unit tests
-- [ ] Write integration tests
-- [ ] Write system/acceptance tests
+- [x] Write unit tests
+- [x] Write integration tests
+- [x] Write system/acceptance tests
 - [ ] Add regression test suite
 - [ ] Conduct performance testing (load, stress)
-- [ ] Perform security checks (input, encryption, tokens)
+- [x] Perform security checks (input, encryption, tokens)
 - [ ] Perform exploit testing (SQLi, XSS, overflow)
 - [ ] Check for backdoors & unauthorized access
-- [ ] Run static analysis (lint, type check, vuln scan)
+- [x] Run static analysis (lint, type check, vuln scan)
 - [ ] Run dynamic analysis (fuzzing, runtime behavior)
 
 # Build, Deployment & Monitoring
-- [ ] Create automated build scripts (Makefile, .bat, shell)
-- [ ] Set up CI/CD pipeline (GitHub Actions, Jenkins, etc.)
-- [ ] Configure environment-specific settings (dev/stage/prod)
+- [x] Create automated build scripts (Makefile, .bat, shell)
+- [x] Set up CI/CD pipeline (GitHub Actions, Jenkins, etc.)
+- [x] Configure environment-specific settings (dev/stage/prod)
 - [x] Build distributable packages (Dockerfile, zip, exe)
 - [ ] Create installer or assembly file (.bat, setup wizard)
 - [x] Implement semantic versioning (v1.0.0)
@@ -50,10 +50,10 @@
 - [ ] Conduct manual exploratory testing
 - [ ] Peer review / code audit
 - [ ] Run penetration test (internal or 3rd-party)
-- [ ] Document APIs (Swagger / Postman)
-- [ ] Create architecture & data flow diagrams
-- [ ] Finalize user documentation (README, FAQ, troubleshooting)
-- [ ] Add license file
-- [ ] Write changelog
+- [x] Document APIs (Swagger / Postman)
+- [x] Create architecture & data flow diagrams
+- [x] Finalize user documentation (README, FAQ, troubleshooting)
+- [x] Add license file
+- [x] Write changelog
 - [ ] Perform compliance review (GDPR, HIPAA, etc.)
-- [ ] Tag release & archive build artifacts
+- [x] Tag release & archive build artifacts

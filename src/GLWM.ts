@@ -21,9 +21,7 @@ import { MintingPortal } from './minting';
 import { Cache } from './utils';
 
 type StateListener = (state: GLWMState) => void;
-type EventHandler<T extends GLWMEvent['type']> = (
-  payload: Extract<GLWMEvent, { type: T }>
-) => void;
+type EventHandler<T extends GLWMEvent['type']> = (payload: Extract<GLWMEvent, { type: T }>) => void;
 
 const DEFAULT_CACHE_CONFIG: CacheConfig = {
   enabled: true,
@@ -262,8 +260,12 @@ export class GLWM {
   isProviderAvailable(provider: WalletProvider): boolean {
     if (!this.walletConnector) {
       // Fallback detection
-      if (typeof window === 'undefined') return provider === 'walletconnect';
-      if (provider === 'metamask') return 'ethereum' in window;
+      if (typeof window === 'undefined') {
+        return provider === 'walletconnect';
+      }
+      if (provider === 'metamask') {
+        return 'ethereum' in window;
+      }
       return false;
     }
     return this.walletConnector.isProviderAvailable(provider);
@@ -459,10 +461,10 @@ export class GLWM {
       this.eventHandlers.set(event, new Set());
     }
     const handlers = this.eventHandlers.get(event);
-    handlers?.add(handler as EventHandler<GLWMEvent['type']>);
+    handlers?.add(handler as unknown as EventHandler<GLWMEvent['type']>);
 
     return () => {
-      handlers?.delete(handler as EventHandler<GLWMEvent['type']>);
+      handlers?.delete(handler as unknown as EventHandler<GLWMEvent['type']>);
     };
   }
 
@@ -524,7 +526,10 @@ export class GLWM {
 
   private ensureInitialized(): void {
     if (this.state.status === 'uninitialized') {
-      throw this.createError('CONFIGURATION_ERROR', 'SDK not initialized. Call initialize() first.');
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        'SDK not initialized. Call initialize() first.'
+      );
     }
   }
 
