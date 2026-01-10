@@ -32,6 +32,9 @@ export {
   configManager,
   createConfigFromEnv,
   ENV_KEYS,
+  Metrics,
+  MetricNames,
+  metrics,
 } from './utils';
 
 export type {
@@ -41,4 +44,8 @@ export type {
   ErrorReport,
   Breadcrumb,
   ExtendedGLWMConfig,
+  MetricsConfig,
+  MetricEntry,
+  MetricType,
+  TimingMeasurement,
 } from './utils';
