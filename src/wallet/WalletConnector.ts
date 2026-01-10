@@ -255,9 +255,15 @@ export class WalletConnector {
    * Detect the best available provider
    */
   private detectBestProvider(): WalletProvider {
-    if (this.isProviderAvailable('metamask')) return 'metamask';
-    if (this.isProviderAvailable('coinbase')) return 'coinbase';
-    if (this.isProviderAvailable('phantom')) return 'phantom';
+    if (this.isProviderAvailable('metamask')) {
+      return 'metamask';
+    }
+    if (this.isProviderAvailable('coinbase')) {
+      return 'coinbase';
+    }
+    if (this.isProviderAvailable('phantom')) {
+      return 'phantom';
+    }
     return 'walletconnect';
   }
 
@@ -265,7 +271,9 @@ export class WalletConnector {
    * Get the Ethereum provider for a wallet type
    */
   private getEthereumProvider(provider: WalletProvider): EthereumProvider | null {
-    if (typeof window === 'undefined') return null;
+    if (typeof window === 'undefined') {
+      return null;
+    }
 
     switch (provider) {
       case 'phantom':
@@ -331,10 +339,14 @@ export class WalletConnector {
    */
   private removeEventListeners(): void {
     const provider = this.session.connection?.provider;
-    if (!provider) return;
+    if (!provider) {
+      return;
+    }
 
     const ethereumProvider = this.getEthereumProvider(provider);
-    if (!ethereumProvider) return;
+    if (!ethereumProvider) {
+      return;
+    }
 
     for (const [event, handler] of this.eventHandlers) {
       ethereumProvider.removeListener(event, handler);
@@ -373,11 +385,7 @@ export class WalletConnector {
       );
     }
 
-    return this.createError(
-      'NETWORK_ERROR',
-      err.message ?? 'Failed to connect wallet',
-      provider
-    );
+    return this.createError('NETWORK_ERROR', err.message ?? 'Failed to connect wallet', provider);
   }
 
   /**

@@ -47,10 +47,7 @@ export const ENV_KEYS = {
  */
 export class ConfigManager {
   private envCache: Map<string, string | undefined> = new Map();
-  private sensitiveKeys = new Set([
-    ENV_KEYS.RPC_API_KEY,
-    ENV_KEYS.SENTRY_DSN,
-  ]);
+  private sensitiveKeys: Set<string> = new Set([ENV_KEYS.RPC_API_KEY, ENV_KEYS.SENTRY_DSN]);
 
   /**
    * Get an environment variable value
@@ -116,7 +113,10 @@ export class ConfigManager {
     if (value === undefined) {
       return defaultValue;
     }
-    return value.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+    return value
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
   }
 
   /**
@@ -147,10 +147,18 @@ export class ConfigManager {
 
     const config: Partial<RPCConfig> = {};
 
-    if (provider) config.provider = provider;
-    if (apiKey) config.apiKey = apiKey;
-    if (customUrl) config.customUrl = customUrl;
-    if (fallbackUrls) config.fallbackUrls = fallbackUrls;
+    if (provider) {
+      config.provider = provider;
+    }
+    if (apiKey) {
+      config.apiKey = apiKey;
+    }
+    if (customUrl) {
+      config.customUrl = customUrl;
+    }
+    if (fallbackUrls) {
+      config.fallbackUrls = fallbackUrls;
+    }
 
     return config;
   }
@@ -160,12 +168,18 @@ export class ConfigManager {
    */
   buildMintingPortalConfig(): Partial<MintingPortalConfig> {
     const url = this.getEnv(ENV_KEYS.MINTING_PORTAL_URL);
-    const mode = this.getEnv(ENV_KEYS.MINTING_PORTAL_MODE) as MintingPortalConfig['mode'] | undefined;
+    const mode = this.getEnv(ENV_KEYS.MINTING_PORTAL_MODE) as
+      | MintingPortalConfig['mode']
+      | undefined;
 
     const config: Partial<MintingPortalConfig> = {};
 
-    if (url) config.url = url;
-    if (mode) config.mode = mode;
+    if (url) {
+      config.url = url;
+    }
+    if (mode) {
+      config.mode = mode;
+    }
 
     return config;
   }
@@ -202,8 +216,12 @@ export class ConfigManager {
       config.enabled = true;
       config.dsn = dsn;
     }
-    if (environment) config.environment = environment;
-    if (release) config.release = release;
+    if (environment) {
+      config.environment = environment;
+    }
+    if (release) {
+      config.release = release;
+    }
 
     return config;
   }
@@ -217,8 +235,12 @@ export class ConfigManager {
 
     const config: Partial<CacheConfig> = {};
 
-    if (enabled !== undefined) config.enabled = enabled;
-    if (ttl !== undefined) config.ttlSeconds = ttl;
+    if (enabled !== undefined) {
+      config.enabled = enabled;
+    }
+    if (ttl !== undefined) {
+      config.ttlSeconds = ttl;
+    }
 
     return config;
   }
@@ -228,7 +250,8 @@ export class ConfigManager {
    * Merges with provided base config, with environment taking precedence
    */
   buildConfig(baseConfig?: Partial<ExtendedGLWMConfig>): ExtendedGLWMConfig {
-    const licenseContract = this.getEnv(ENV_KEYS.LICENSE_CONTRACT) ?? baseConfig?.licenseContract ?? '';
+    const licenseContract =
+      this.getEnv(ENV_KEYS.LICENSE_CONTRACT) ?? baseConfig?.licenseContract ?? '';
     const chainId = this.getEnvAsNumber(ENV_KEYS.CHAIN_ID) ?? baseConfig?.chainId ?? 1;
 
     const envRpcConfig = this.buildRpcConfig();

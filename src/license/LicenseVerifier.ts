@@ -46,14 +46,16 @@ export class LicenseVerifier {
       throw this.createError('CONTRACT_ERROR', 'License contract not initialized');
     }
 
+    const contract = this.contract;
     const blockNumber = await this.rpcProvider.getBlockNumber();
     const checkedAt = Date.now();
 
     try {
       // Check if the address owns any tokens
-      const balance = await this.rpcProvider.call(() =>
-        this.contract!.balanceOf(address)
-      );
+      const balance = await this.rpcProvider.call(async () => {
+        const balanceOf = contract.getFunction('balanceOf');
+        return balanceOf(address);
+      });
 
       if (balance === 0n) {
         return {
@@ -66,9 +68,10 @@ export class LicenseVerifier {
       }
 
       // Get the first token owned by the address
-      const tokenId = await this.rpcProvider.call(() =>
-        this.contract!.tokenOfOwnerByIndex(address, 0)
-      );
+      const tokenId = await this.rpcProvider.call(async () => {
+        const tokenOfOwnerByIndex = contract.getFunction('tokenOfOwnerByIndex');
+        return tokenOfOwnerByIndex(address, 0);
+      });
 
       // Fetch license details
       const license = await this.getLicenseById(tokenId.toString(), address);
@@ -125,16 +128,19 @@ export class LicenseVerifier {
       throw this.createError('CONTRACT_ERROR', 'License contract not initialized');
     }
 
+    const contract = this.contract;
     const licenses: LicenseNFT[] = [];
 
-    const balance = await this.rpcProvider.call(() =>
-      this.contract!.balanceOf(address)
-    );
+    const balance = await this.rpcProvider.call(async () => {
+      const balanceOf = contract.getFunction('balanceOf');
+      return balanceOf(address);
+    });
 
     for (let i = 0n; i < balance; i++) {
-      const tokenId = await this.rpcProvider.call(() =>
-        this.contract!.tokenOfOwnerByIndex(address, i)
-      );
+      const tokenId = await this.rpcProvider.call(async () => {
+        const tokenOfOwnerByIndex = contract.getFunction('tokenOfOwnerByIndex');
+        return tokenOfOwnerByIndex(address, i);
+      });
 
       const license = await this.getLicenseById(tokenId.toString(), address);
       licenses.push(license);
@@ -151,15 +157,21 @@ export class LicenseVerifier {
       throw this.createError('CONTRACT_ERROR', 'License contract not initialized');
     }
 
+    const contract = this.contract;
+
     // Get owner if not provided
-    const licenseOwner = owner ?? (await this.rpcProvider.call(() =>
-      this.contract!.ownerOf(tokenId)
-    ));
+    const licenseOwner =
+      owner ??
+      (await this.rpcProvider.call(async () => {
+        const ownerOf = contract.getFunction('ownerOf');
+        return ownerOf(tokenId);
+      }));
 
     // Get token URI
-    const tokenUri = await this.rpcProvider.call(() =>
-      this.contract!.tokenURI(tokenId)
-    );
+    const tokenUri = await this.rpcProvider.call(async () => {
+      const tokenURI = contract.getFunction('tokenURI');
+      return tokenURI(tokenId);
+    });
 
     // Fetch and parse metadata
     const metadata = await this.fetchMetadata(tokenUri);
@@ -226,7 +238,9 @@ export class LicenseVerifier {
   /**
    * Parse NFT attributes array into LicenseAttributes
    */
-  private parseAttributes(attributes: Array<{ trait_type: string; value: unknown }>): LicenseAttributes {
+  private parseAttributes(
+    attributes: Array<{ trait_type: string; value: unknown }>
+  ): LicenseAttributes {
     const result: LicenseAttributes = {
       version: '1.0',
       edition: 'standard',

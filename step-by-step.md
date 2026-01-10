@@ -23,15 +23,15 @@
 - [ ] Add accessibility & localization support (CLI application)
 
 # Testing & Validation
-- [ ] Write unit tests
-- [ ] Write integration tests
+- [x] Write unit tests
+- [x] Write integration tests
 - [ ] Write system/acceptance tests
 - [ ] Add regression test suite
 - [ ] Conduct performance testing (load, stress)
 - [ ] Perform security checks (input, encryption, tokens)
 - [ ] Perform exploit testing (SQLi, XSS, overflow)
 - [ ] Check for backdoors & unauthorized access
-- [ ] Run static analysis (lint, type check, vuln scan)
+- [x] Run static analysis (lint, type check, vuln scan)
 - [ ] Run dynamic analysis (fuzzing, runtime behavior)
 
 # Build, Deployment & Monitoring
