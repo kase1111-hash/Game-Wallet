@@ -181,8 +181,7 @@ export class LicenseVerifier {
       contractAddress: this.contractAddress,
       owner: licenseOwner,
       metadata,
-      mintedAt: 0, // Would need to query events for this
-      transactionHash: '', // Would need to query events for this
+      // Note: mintedAt and transactionHash require event querying and are omitted
     };
   }
 
