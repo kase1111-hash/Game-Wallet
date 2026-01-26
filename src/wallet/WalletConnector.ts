@@ -8,6 +8,43 @@ import type {
 } from '../types';
 import { generateSessionId, checksumAddress } from '../utils/helpers';
 
+/**
+ * Type guard for errors with code and message properties (EIP-1193 errors)
+ */
+function isEIP1193Error(error: unknown): error is { code: number; message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof (error as { code: unknown }).code === 'number' &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  );
+}
+
+/**
+ * Safely extract error code from unknown error
+ */
+function getErrorCode(error: unknown): number | undefined {
+  if (isEIP1193Error(error)) {
+    return error.code;
+  }
+  return undefined;
+}
+
+/**
+ * Safely extract error message from unknown error
+ */
+function getErrorMessage(error: unknown): string {
+  if (isEIP1193Error(error)) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return 'Unknown error';
+}
+
 // Ethereum provider interface (EIP-1193)
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -230,10 +267,10 @@ export class WalletConnector {
         });
       }
     } catch (error) {
-      const err = error as { code?: number };
+      const errorCode = getErrorCode(error);
 
       // Chain not added to wallet - try to add it
-      if (err.code === 4902) {
+      if (errorCode === 4902) {
         throw this.createError(
           'CHAIN_MISMATCH',
           `Chain ${chainId} is not configured in your wallet. Please add it manually.`
@@ -367,9 +404,10 @@ export class WalletConnector {
    * Handle connection errors
    */
   private handleConnectionError(error: unknown, provider: WalletProvider): WalletError {
-    const err = error as { code?: number; message?: string };
+    const errorCode = getErrorCode(error);
+    const errorMessage = getErrorMessage(error);
 
-    if (err.code === 4001) {
+    if (errorCode === 4001) {
       return this.createError(
         'WALLET_CONNECTION_REJECTED',
         'User rejected the connection request',
@@ -377,7 +415,7 @@ export class WalletConnector {
       );
     }
 
-    if (err.code === -32002) {
+    if (errorCode === -32002) {
       return this.createError(
         'WALLET_CONNECTION_REJECTED',
         'Connection request already pending. Please check your wallet.',
@@ -385,7 +423,7 @@ export class WalletConnector {
       );
     }
 
-    return this.createError('NETWORK_ERROR', err.message ?? 'Failed to connect wallet', provider);
+    return this.createError('NETWORK_ERROR', errorMessage || 'Failed to connect wallet', provider);
   }
 
   /**

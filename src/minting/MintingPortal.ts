@@ -16,6 +16,44 @@ interface PortalMessage {
 }
 
 /**
+ * Type guard for mint started payload
+ */
+function isMintStartedPayload(payload: unknown): payload is { transactionHash: string } {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'transactionHash' in payload &&
+    typeof (payload as { transactionHash: unknown }).transactionHash === 'string'
+  );
+}
+
+/**
+ * Type guard for MintResult
+ */
+function isMintResult(payload: unknown): payload is MintResult {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'success' in payload &&
+    typeof (payload as { success: unknown }).success === 'boolean'
+  );
+}
+
+/**
+ * Type guard for MintError
+ */
+function isMintError(payload: unknown): payload is MintError {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'code' in payload &&
+    'message' in payload &&
+    typeof (payload as { code: unknown }).code === 'string' &&
+    typeof (payload as { message: unknown }).message === 'string'
+  );
+}
+
+/**
  * Controls the minting portal WebView/iframe/redirect
  */
 export class MintingPortal {
@@ -265,24 +303,27 @@ export class MintingPortal {
         break;
 
       case 'MINT_STARTED':
-        const txHash = (message.payload as { transactionHash: string }).transactionHash;
-        this.onMintStarted?.(txHash);
+        if (isMintStartedPayload(message.payload)) {
+          this.onMintStarted?.(message.payload.transactionHash);
+        }
         break;
 
       case 'MINT_COMPLETED':
-        const result = message.payload as MintResult;
-        this.onMintCompleted?.(result);
-        if (this.config.autoCloseOnMint !== false) {
-          this.close();
+        if (isMintResult(message.payload)) {
+          this.onMintCompleted?.(message.payload);
+          if (this.config.autoCloseOnMint !== false) {
+            this.close();
+          }
         }
         break;
 
       case 'MINT_FAILED':
-        const error = message.payload as MintError;
-        this.onMintCompleted?.({
-          success: false,
-          error,
-        });
+        if (isMintError(message.payload)) {
+          this.onMintCompleted?.({
+            success: false,
+            error: message.payload,
+          });
+        }
         break;
 
       case 'PORTAL_CLOSED':

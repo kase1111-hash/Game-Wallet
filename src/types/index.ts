@@ -30,8 +30,8 @@ export interface LicenseNFT {
   contractAddress: string; // License collection contract
   owner: string; // Current owner address
   metadata: LicenseMetadata;
-  mintedAt: number; // Block timestamp
-  transactionHash: string; // Mint transaction
+  mintedAt?: number; // Block timestamp (requires event query)
+  transactionHash?: string; // Mint transaction hash (requires event query)
 }
 
 export interface LicenseMetadata {
