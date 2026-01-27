@@ -66,7 +66,7 @@ export class RPCProvider {
     for (const provider of allProviders) {
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-          const result = await Promise.race([fn(provider), this.createTimeoutPromise<T>(timeout)]);
+          const result = await this.withTimeout(fn(provider), timeout);
           return result;
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
@@ -132,18 +132,26 @@ export class RPCProvider {
 
   /**
    * Get Alchemy RPC URL for a given chain
+   * Updated to remove deprecated testnets (Goerli, Mumbai) and add current ones
    */
   private getAlchemyUrl(chainId: ChainId, apiKey: string): string {
     const networks: Record<number, string> = {
+      // Ethereum
       1: 'eth-mainnet',
-      5: 'eth-goerli',
       11155111: 'eth-sepolia',
+      17000: 'eth-holesky',
+      // Polygon
       137: 'polygon-mainnet',
-      80001: 'polygon-mumbai',
+      80002: 'polygon-amoy',
+      // Arbitrum
       42161: 'arb-mainnet',
-      421613: 'arb-goerli',
+      421614: 'arb-sepolia',
+      // Optimism
       10: 'opt-mainnet',
-      420: 'opt-goerli',
+      11155420: 'opt-sepolia',
+      // Base
+      8453: 'base-mainnet',
+      84532: 'base-sepolia',
     };
 
     const network = networks[chainId];
@@ -156,18 +164,26 @@ export class RPCProvider {
 
   /**
    * Get Infura RPC URL for a given chain
+   * Updated to remove deprecated testnets (Goerli, Mumbai) and add current ones
    */
   private getInfuraUrl(chainId: ChainId, apiKey: string): string {
     const networks: Record<number, string> = {
+      // Ethereum
       1: 'mainnet',
-      5: 'goerli',
       11155111: 'sepolia',
+      17000: 'holesky',
+      // Polygon
       137: 'polygon-mainnet',
-      80001: 'polygon-mumbai',
+      80002: 'polygon-amoy',
+      // Arbitrum
       42161: 'arbitrum-mainnet',
-      421613: 'arbitrum-goerli',
+      421614: 'arbitrum-sepolia',
+      // Optimism
       10: 'optimism-mainnet',
-      420: 'optimism-goerli',
+      11155420: 'optimism-sepolia',
+      // Base
+      8453: 'base-mainnet',
+      84532: 'base-sepolia',
     };
 
     const network = networks[chainId];
@@ -190,11 +206,23 @@ export class RPCProvider {
   }
 
   /**
-   * Create a timeout promise
+   * Execute a promise with timeout, properly cleaning up the timer on success
    */
-  private createTimeoutPromise<T>(ms: number): Promise<T> {
-    return new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
+  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Request timed out after ${ms}ms`));
+      }, ms);
+
+      promise
+        .then((result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        });
     });
   }
 

@@ -55,11 +55,22 @@ function isMintError(payload: unknown): payload is MintError {
 
 /**
  * Controls the minting portal WebView/iframe/redirect
+ *
+ * Supported modes:
+ * - 'iframe': Opens portal in an iframe overlay (browser environments)
+ * - 'redirect': Redirects to portal URL (browser environments)
+ * - 'webview': For native apps - currently falls back to iframe in browser.
+ *              Native WebView support requires platform-specific implementation
+ *              (React Native, Electron, etc.) which is not yet implemented.
+ *
+ * Note: For React Native or other native platforms, use mode='redirect' or
+ * implement a custom minting flow using the portal URL directly.
  */
 export class MintingPortal {
   private config: MintingPortalConfig;
   private walletAddress: string | null = null;
   private iframe: HTMLIFrameElement | null = null;
+  private overlay: HTMLDivElement | null = null;
   private messageHandler: ((event: MessageEvent) => void) | null = null;
   private isOpen = false;
 
@@ -121,10 +132,14 @@ export class MintingPortal {
       return;
     }
 
-    if (this.iframe) {
-      this.iframe.remove();
-      this.iframe = null;
+    // Remove overlay (which contains the iframe)
+    if (this.overlay) {
+      this.overlay.remove();
+      this.overlay = null;
     }
+
+    // Clear iframe reference
+    this.iframe = null;
 
     if (this.messageHandler) {
       window.removeEventListener('message', this.messageHandler);
@@ -165,10 +180,10 @@ export class MintingPortal {
       );
     }
 
-    // Create overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'glwm-portal-overlay';
-    overlay.style.cssText = `
+    // Create overlay and store reference for proper cleanup
+    this.overlay = document.createElement('div');
+    this.overlay.id = 'glwm-portal-overlay';
+    this.overlay.style.cssText = `
       position: fixed;
       top: 0;
       left: 0;
@@ -227,18 +242,15 @@ export class MintingPortal {
     // Assemble and add to DOM
     container.appendChild(closeButton);
     container.appendChild(this.iframe);
-    overlay.appendChild(container);
-    document.body.appendChild(overlay);
+    this.overlay.appendChild(container);
+    document.body.appendChild(this.overlay);
 
     // Close on overlay click
-    overlay.onclick = (e) => {
-      if (e.target === overlay) {
+    this.overlay.onclick = (e) => {
+      if (e.target === this.overlay) {
         this.close();
       }
     };
-
-    // Store overlay reference for cleanup
-    this.iframe.dataset['overlay'] = overlay.id;
   }
 
   /**
