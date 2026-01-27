@@ -100,10 +100,15 @@ export class WalletConnector {
 
   /**
    * Check if a wallet provider is available
+   *
+   * Note: WalletConnect is not yet implemented and will return false.
+   * Use MetaMask, Coinbase, Phantom, or custom providers for now.
    */
   isProviderAvailable(provider: WalletProvider): boolean {
     if (typeof window === 'undefined') {
-      return provider === 'walletconnect'; // WalletConnect works server-side via QR
+      // No browser-based wallets available in non-browser environments
+      // WalletConnect would require additional implementation
+      return false;
     }
 
     switch (provider) {
@@ -114,7 +119,8 @@ export class WalletConnector {
       case 'phantom':
         return Boolean(window.phantom?.ethereum);
       case 'walletconnect':
-        return true; // Always available
+        // WalletConnect is not yet implemented - requires @walletconnect/web3-provider
+        return false;
       case 'custom':
         return Boolean(window.ethereum);
       default:
@@ -124,10 +130,14 @@ export class WalletConnector {
 
   /**
    * Get list of available providers
+   *
+   * Note: Only returns providers that are actually implemented and available.
+   * WalletConnect is excluded until implementation is complete.
    */
   getAvailableProviders(): WalletProvider[] {
     const providers: WalletProvider[] = [];
-    const allProviders: WalletProvider[] = ['metamask', 'coinbase', 'phantom', 'walletconnect'];
+    // Exclude 'walletconnect' as it's not yet implemented
+    const allProviders: WalletProvider[] = ['metamask', 'coinbase', 'phantom'];
 
     for (const provider of allProviders) {
       if (this.isProviderAvailable(provider)) {
@@ -301,7 +311,8 @@ export class WalletConnector {
     if (this.isProviderAvailable('phantom')) {
       return 'phantom';
     }
-    return 'walletconnect';
+    // Fall back to custom (any EIP-1193 provider) if no specific wallet detected
+    return 'custom';
   }
 
   /**

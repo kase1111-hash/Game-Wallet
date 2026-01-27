@@ -1,14 +1,33 @@
 import { getAddress, isAddress } from 'ethers';
 
 /**
- * Generate a unique session ID
+ * Generate a unique session ID using cryptographically secure random values
  */
 export function generateSessionId(): string {
+  // Prefer crypto.randomUUID if available (most modern environments)
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
 
-  // Fallback for environments without crypto.randomUUID
+  // Fallback using crypto.getRandomValues (more secure than Math.random)
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+
+    // Set version (4) and variant bits
+    // Using non-null assertion as we know indices 6 and 8 exist in a 16-byte array
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40; // Version 4
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80; // Variant 10
+
+    const hex = Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  // Last resort fallback for very old environments (not cryptographically secure)
+  // This should rarely be reached in practice
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;

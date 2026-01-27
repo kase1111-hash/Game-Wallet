@@ -8,6 +8,9 @@ import type {
   LicenseEdition,
   GLWMError,
 } from '../types';
+import { Logger } from '../utils/Logger';
+
+const logger = Logger.getInstance().child('LicenseVerifier');
 
 // Minimal ERC721 ABI for license verification
 const LICENSE_ABI = [
@@ -98,9 +101,18 @@ export class LicenseVerifier {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
+      const errorDetails = error instanceof Error ? error.stack : String(error);
+
+      // Log the error for debugging
+      logger.error('License verification failed', {
+        address,
+        error: message,
+        details: errorDetails,
+      });
 
       // Handle specific contract errors
       if (message.includes('paused')) {
+        logger.warn('Contract is paused', { address });
         return {
           isValid: false,
           license: null,
@@ -110,12 +122,17 @@ export class LicenseVerifier {
         };
       }
 
+      // Include error details in the result for better debugging
       return {
         isValid: false,
         license: null,
         checkedAt,
         blockNumber,
         reason: 'verification_failed',
+        // Store error message in a way consumers can access for debugging
+        ...(process.env.NODE_ENV !== 'production' && {
+          _debug: { error: message, stack: errorDetails },
+        }),
       };
     }
   }
@@ -193,6 +210,8 @@ export class LicenseVerifier {
       // Handle IPFS URIs
       const url = this.resolveUri(tokenUri);
 
+      logger.debug('Fetching metadata', { tokenUri, resolvedUrl: url });
+
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch metadata: ${response.status}`);
@@ -206,7 +225,14 @@ export class LicenseVerifier {
         image: data.image,
         attributes: this.parseAttributes(data.attributes ?? []),
       };
-    } catch {
+    } catch (error) {
+      // Log the error for debugging
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      logger.warn('Failed to fetch metadata, using defaults', {
+        tokenUri,
+        error: message,
+      });
+
       // Return default metadata if fetch fails
       return {
         name: 'Game License',

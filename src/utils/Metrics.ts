@@ -231,7 +231,7 @@ export class Metrics {
     this.timings.delete(timerId);
 
     // Extract metric name from timer ID
-    const name = timerId.split('_')[0];
+    const name = timerId.split('_')[0] ?? timerId;
     this.timing(name, duration, tags);
 
     return duration;

@@ -1,14 +1,16 @@
 # GLWM SDK - Code Audit Report
 
-**Audit Date:** 2024-01-10
+**Audit Date:** 2026-01-27
 **Version:** 0.1.0
-**Auditor:** Automated Review + Self-Assessment
+**Auditor:** Comprehensive Manual Review
 
 ## Executive Summary
 
-This document provides a code audit checklist and security review for the GLWM SDK. The SDK has been reviewed for code quality, security vulnerabilities, and best practices.
+This document provides a comprehensive code audit for correctness and fitness for purpose of the GLWM SDK. The SDK has been thoroughly reviewed for code quality, security vulnerabilities, architectural soundness, and production readiness.
 
-**Overall Status:** ✅ PASS
+**Overall Status:** ⚠️ CONDITIONAL PASS - Issues Identified
+
+The SDK is well-architected with good TypeScript practices, but several issues affect its fitness for production use. Critical issues must be addressed before production deployment.
 
 ---
 
@@ -178,51 +180,153 @@ npm audit results: 0 vulnerabilities
 
 ---
 
-## 7. Issues Found
+## 7. Issues Found - Correctness & Fitness for Purpose
 
 ### 7.1 Critical Issues
-None
+
+| Issue | Location | Description | Impact |
+|-------|----------|-------------|--------|
+| **Unimplemented Core Methods** | `GLWM.ts:421-433` | `getMintConfig()` and `mint()` throw "not implemented" errors | SDK cannot perform direct minting without portal |
+| **State Check Incomplete** | `GLWM.ts:527-534` | `ensureInitialized()` only checks for 'uninitialized' but not 'error' status | Methods may execute on errored SDK instance |
 
 ### 7.2 High Priority Issues
-None
+
+| Issue | Location | Description | Impact |
+|-------|----------|-------------|--------|
+| **Race Condition in Portal Wait** | `GLWM.ts:581-593` | `waitForPortalClose()` may miss close event if portal closes before subscription | Promise may never resolve |
+| **WebView Mode Incomplete** | `MintingPortal.ts:264-275` | WebView mode falls back to iframe in browser, throws in non-browser | Native app integration broken |
+| **Deprecated Network References** | `RPCProvider.ts:137-147` | Goerli testnet (chainId 5) is deprecated as of 2023 | Configuration may fail on deprecated networks |
+| **No Mint State Check** | `GLWM.ts:179` | `verifyAndPlay()` opens minting portal without checking if already open | May create duplicate portal instances |
 
 ### 7.3 Medium Priority Issues
-None
 
-### 7.4 Low Priority / Suggestions
+| Issue | Location | Description | Impact |
+|-------|----------|-------------|--------|
+| **Silent Error Recovery** | `LicenseVerifier.ts:99-120` | Contract call failures return `verification_failed` instead of propagating error details | Difficult to debug RPC/contract issues |
+| **Timeout Promise Leak** | `RPCProvider.ts:195-198` | Timeout promise created in `createTimeoutPromise()` is never cleaned up on success | Minor memory leak on successful calls |
+| **Event Handler Type Coercion** | `GLWM.ts:464-468` | Uses `as unknown as` type coercion for event handlers | Potential type safety bypass |
+| **Metadata Fetch Failure Silent** | `LicenseVerifier.ts:209-221` | Returns default metadata on fetch failure without logging | Hard to diagnose IPFS/metadata issues |
+| **Session ID Fallback Weak** | `helpers.ts:12-17` | Fallback UUID generation uses `Math.random()` which is not cryptographically secure | Potential session prediction in rare cases |
 
-| Issue | Recommendation | Priority |
-|-------|----------------|----------|
-| Worker exit warning in tests | Add proper timer cleanup | Low |
-| Console statements in Logger | Expected behavior, documented | Info |
+### 7.4 Low Priority Issues
 
----
-
-## 8. Recommendations
-
-### For Future Development
-
-1. **Add more edge case tests** for RPC failure scenarios
-2. **Consider adding retry logic** with exponential backoff for RPC calls
-3. **Add bundle size monitoring** in CI pipeline
-4. **Consider tree-shaking optimization** for smaller builds
-
-### For Production Use
-
-1. Use environment-specific configurations
-2. Enable metrics for monitoring
-3. Configure appropriate cache TTL
-4. Set log level to 'warn' or 'error' in production
+| Issue | Location | Description | Impact |
+|-------|----------|-------------|--------|
+| **Hardcoded SDK Version** | Multiple files | Version `0.1.0` is hardcoded in multiple locations | Version mismatch risk |
+| **Missing WalletConnect Implementation** | `WalletConnector.ts:304` | WalletConnect returns as available but has no actual implementation | May confuse users expecting WalletConnect support |
+| **Overlay Cleanup Incomplete** | `MintingPortal.ts:241` | Overlay stored via dataset but cleanup relies on iframe removal | Potential DOM leak if iframe ref lost |
+| **Console Logs in Production** | `Logger.ts:196-209` | Console methods always called when `enableConsole` is true | Performance impact in production |
+| **Metrics Hardcoded Version** | `Metrics.ts:284` | SDK version hardcoded as `'0.1.0'` with comment "Should be dynamic" | Stale version in telemetry |
 
 ---
 
-## 9. Sign-off
+## 8. Security Analysis
+
+### 8.1 Positive Security Findings
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| Origin validation in iframe messaging | ✅ | `MintingPortal.ts:283-286` validates event origin |
+| Address checksumming | ✅ | Uses ethers `getAddress()` for proper checksums |
+| No private key handling | ✅ | Wallet signing delegated to providers |
+| Input validation on config | ✅ | `validateConfig()` checks addresses and required fields |
+| Sensitive data masking | ✅ | API keys masked in ConfigManager |
+
+### 8.2 Security Recommendations
+
+| Recommendation | Priority | Notes |
+|----------------|----------|-------|
+| Add Content-Security-Policy for iframe | Medium | Prevent iframe content injection |
+| Validate message structure more strictly | Medium | Type guards exist but could be more thorough |
+| Add rate limiting for RPC calls | Low | Prevent abuse of retry mechanism |
+| Consider adding subresource integrity | Low | For any externally loaded resources |
+
+---
+
+## 9. Fitness for Purpose Assessment
+
+### 9.1 Core Use Cases
+
+| Use Case | Fitness | Notes |
+|----------|---------|-------|
+| Wallet connection (MetaMask) | ✅ Ready | Well implemented with event handling |
+| Wallet connection (WalletConnect) | ❌ Not Ready | Listed as available but unimplemented |
+| License verification | ✅ Ready | Solid implementation with caching |
+| Minting via portal | ⚠️ Partial | Portal works but WebView mode incomplete |
+| Direct minting | ❌ Not Ready | `mint()` method throws unimplemented error |
+| Multi-chain support | ✅ Ready | Proper chain ID handling and switching |
+| Error recovery | ⚠️ Partial | Retry logic exists but some edge cases missed |
+
+### 9.2 Environment Compatibility
+
+| Environment | Status | Notes |
+|-------------|--------|-------|
+| Modern browsers | ✅ Ready | Full support with iframe mode |
+| Node.js (SSR) | ⚠️ Partial | Will fail on DOM-dependent operations |
+| React Native | ❌ Not Ready | WebView mode not implemented |
+| Electron | ✅ Ready | Iframe mode will work |
+
+### 9.3 Production Readiness Checklist
+
+| Item | Status |
+|------|--------|
+| Error handling comprehensive | ⚠️ |
+| Logging adequate | ✅ |
+| Metrics collection | ✅ |
+| Documentation complete | ✅ |
+| Test coverage adequate | ⚠️ |
+| No unimplemented public methods | ❌ |
+| All advertised features work | ❌ |
+
+---
+
+## 10. Recommendations
+
+### 10.1 Must Fix Before Production
+
+1. **Implement or remove `getMintConfig()` and `mint()` methods** - Public methods throwing "not implemented" errors is unacceptable
+2. **Fix race condition in `waitForPortalClose()`** - Check portal state before subscribing
+3. **Update `ensureInitialized()` to also check error state** - Prevent operations on failed SDK
+4. **Add minting state check in `verifyAndPlay()`** - Prevent duplicate portal opens
+
+### 10.2 Should Fix Before Production
+
+1. **Remove or properly implement WalletConnect** - Currently misleading
+2. **Update deprecated network references** - Remove Goerli, add Sepolia/Holesky
+3. **Implement proper WebView support or document limitation** - Clear expectations for native apps
+4. **Add structured error details for verification failures** - Better debugging
+
+### 10.3 Consider for Future Releases
+
+1. Add bundle size optimization
+2. Implement direct minting capability
+3. Add more comprehensive integration tests with mocked RPC
+4. Consider extracting version from package.json dynamically
+
+---
+
+## 11. Code Quality Metrics
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Lines of Code (src) | ~2,800 | Appropriate |
+| Lines of Code (tests) | ~3,000 | Good test coverage |
+| TypeScript Strict Mode | ✅ | Excellent |
+| ESLint Violations | 0 | Clean |
+| Cyclomatic Complexity | Low-Medium | Acceptable |
+| Dependencies | 1 (ethers) | Minimal |
+
+---
+
+## 12. Sign-off
 
 | Role | Status | Date |
 |------|--------|------|
-| Code Review | ✅ Complete | 2024-01-10 |
-| Security Review | ✅ Complete | 2024-01-10 |
-| Test Review | ✅ Complete | 2024-01-10 |
-| Documentation Review | ✅ Complete | 2024-01-10 |
+| Code Review | ✅ Complete | 2026-01-27 |
+| Security Review | ✅ Complete | 2026-01-27 |
+| Correctness Review | ✅ Complete | 2026-01-27 |
+| Fitness Assessment | ✅ Complete | 2026-01-27 |
 
-**Conclusion:** The GLWM SDK v0.1.0 passes code audit with no critical, high, or medium priority issues identified. The codebase follows best practices for TypeScript development, security, and maintainability.
+**Conclusion:** The GLWM SDK v0.1.0 shows solid architectural foundations and good TypeScript practices. However, **production deployment is not recommended** until Critical and High priority issues are addressed. The SDK is suitable for development and testing purposes in its current state.
+
+**Estimated Effort to Production Ready:** 2-3 development days to address Critical/High issues.

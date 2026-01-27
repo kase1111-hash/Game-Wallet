@@ -160,6 +160,20 @@ export class GLWM {
    * @throws GLWMError if flow cannot complete
    */
   async verifyAndPlay(): Promise<LicenseVerificationResult> {
+    this.ensureInitialized();
+
+    // Check if minting is already in progress
+    if (
+      this.state.status === 'minting_portal_open' ||
+      this.state.status === 'minting_in_progress'
+    ) {
+      throw this.createError(
+        'USER_CANCELLED',
+        'Minting is already in progress. Please complete or close the current minting session.',
+        true
+      );
+    }
+
     // Ensure wallet is connected
     const session = this.getWalletSession();
     if (!session.isConnected) {
@@ -176,7 +190,16 @@ export class GLWM {
       return result;
     }
 
-    // No valid license - open minting portal
+    // No valid license - check portal isn't already open before opening
+    if (this.mintingPortal?.isPortalOpen()) {
+      throw this.createError(
+        'USER_CANCELLED',
+        'Minting portal is already open.',
+        true
+      );
+    }
+
+    // Open minting portal
     await this.openMintingPortal();
 
     // Wait for portal to close (user minted or cancelled)
@@ -256,15 +279,22 @@ export class GLWM {
 
   /**
    * Check if a specific wallet provider is available
+   *
+   * Note: WalletConnect is not yet implemented and will return false.
    */
   isProviderAvailable(provider: WalletProvider): boolean {
     if (!this.walletConnector) {
-      // Fallback detection
+      // Fallback detection when SDK not initialized
       if (typeof window === 'undefined') {
-        return provider === 'walletconnect';
+        // No browser wallets available in non-browser environments
+        return false;
       }
       if (provider === 'metamask') {
         return 'ethereum' in window;
+      }
+      if (provider === 'walletconnect') {
+        // WalletConnect is not yet implemented
+        return false;
       }
       return false;
     }
@@ -413,23 +443,39 @@ export class GLWM {
 
   /**
    * Get current mint configuration and pricing
+   *
+   * Note: This method requires contract ABI integration which is not yet implemented.
+   * Use the minting portal for now, which handles configuration internally.
+   *
+   * @throws GLWMError with code 'CONTRACT_ERROR' indicating feature not available
    */
   async getMintConfig(): Promise<MintConfig> {
     this.ensureInitialized();
 
-    // This would typically query the contract or an API
-    throw new Error('getMintConfig not yet implemented - requires contract ABI');
+    throw this.createError(
+      'CONTRACT_ERROR',
+      'getMintConfig() requires contract ABI integration. Use openMintingPortal() instead.',
+      false
+    );
   }
 
   /**
    * Programmatically initiate mint (advanced usage)
-   * Most implementations should use openMintingPortal() instead
+   *
+   * Note: Direct minting is not yet implemented. Use openMintingPortal() for
+   * the full minting flow which handles wallet signing and transaction management.
+   *
+   * @param _request - Mint request parameters (unused until implemented)
+   * @throws GLWMError with code 'CONTRACT_ERROR' indicating feature not available
    */
   async mint(_request: MintRequest): Promise<MintResult> {
     this.ensureInitialized();
 
-    // This would execute a mint transaction directly
-    throw new Error('Direct minting not yet implemented - use openMintingPortal()');
+    throw this.createError(
+      'CONTRACT_ERROR',
+      'Direct minting not yet implemented. Use openMintingPortal() for minting.',
+      false
+    );
   }
 
   // ============================================
@@ -531,6 +577,13 @@ export class GLWM {
         'SDK not initialized. Call initialize() first.'
       );
     }
+    if (this.state.status === 'error') {
+      const errorState = this.state as { status: 'error'; error: GLWMError };
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        `SDK is in error state: ${errorState.error.message}. Call initialize() to retry.`
+      );
+    }
   }
 
   private setState(newState: GLWMState): void {
@@ -580,15 +633,18 @@ export class GLWM {
 
   private waitForPortalClose(): Promise<void> {
     return new Promise((resolve) => {
-      if (!this.mintingPortal?.isPortalOpen()) {
-        resolve();
-        return;
-      }
-
+      // Subscribe first to avoid race condition where portal closes
+      // between check and subscription
       const unsubscribe = this.on('CLOSE_MINTING_PORTAL', () => {
         unsubscribe();
         resolve();
       });
+
+      // Then check if already closed (handles race condition)
+      if (!this.mintingPortal?.isPortalOpen()) {
+        unsubscribe();
+        resolve();
+      }
     });
   }
 }
