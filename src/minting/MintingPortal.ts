@@ -1,7 +1,5 @@
 import type {
   MintingPortalConfig,
-  MintConfig,
-  MintRequest,
   MintResult,
   MintError,
   GLWMError,
@@ -54,17 +52,11 @@ function isMintError(payload: unknown): payload is MintError {
 }
 
 /**
- * Controls the minting portal WebView/iframe/redirect
+ * Controls the minting portal iframe/redirect
  *
  * Supported modes:
  * - 'iframe': Opens portal in an iframe overlay (browser environments)
  * - 'redirect': Redirects to portal URL (browser environments)
- * - 'webview': For native apps - currently falls back to iframe in browser.
- *              Native WebView support requires platform-specific implementation
- *              (React Native, Electron, etc.) which is not yet implemented.
- *
- * Note: For React Native or other native platforms, use mode='redirect' or
- * implement a custom minting flow using the portal URL directly.
  */
 export class MintingPortal {
   private config: MintingPortalConfig;
@@ -113,9 +105,6 @@ export class MintingPortal {
         break;
       case 'redirect':
         this.openRedirect();
-        break;
-      case 'webview':
-        await this.openWebview();
         break;
       default:
         throw this.createError('CONFIGURATION_ERROR', `Unknown portal mode: ${this.config.mode}`);
@@ -271,22 +260,6 @@ export class MintingPortal {
   }
 
   /**
-   * Open portal as webview (for native apps)
-   */
-  private async openWebview(): Promise<void> {
-    // WebView implementation would depend on the platform (React Native, Electron, etc.)
-    // For now, fall back to iframe in browser environment
-    if (typeof document !== 'undefined') {
-      return this.openIframe();
-    }
-
-    throw this.createError(
-      'CONFIGURATION_ERROR',
-      'WebView mode requires platform-specific implementation'
-    );
-  }
-
-  /**
    * Set up message listener for portal communication
    */
   private setupMessageListener(): void {
@@ -364,37 +337,4 @@ export class MintingPortal {
       recoverable: false,
     };
   }
-}
-
-/**
- * Fetch mint configuration from a contract or API
- */
-export async function fetchMintConfig(
-  _contractAddress: string,
-  _rpcUrl: string
-): Promise<MintConfig> {
-  // This would typically query the mint contract for:
-  // - Available editions
-  // - Prices
-  // - Supply limits
-  // - Current availability
-
-  throw new Error('fetchMintConfig not yet implemented');
-}
-
-/**
- * Execute a mint transaction
- */
-export async function executeMint(
-  _request: MintRequest,
-  _contractAddress: string,
-  _signer: unknown
-): Promise<MintResult> {
-  // This would:
-  // 1. Build the mint transaction
-  // 2. Send to the user's wallet for signing
-  // 3. Wait for confirmation
-  // 4. Return the result
-
-  throw new Error('executeMint not yet implemented');
 }

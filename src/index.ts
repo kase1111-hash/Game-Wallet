@@ -26,26 +26,9 @@ export {
   Logger,
   LogLevel,
   logger,
-  ErrorReporter,
-  errorReporter,
-  ConfigManager,
-  configManager,
-  createConfigFromEnv,
-  ENV_KEYS,
-  Metrics,
-  MetricNames,
-  metrics,
 } from './utils';
 
 export type {
   LoggerConfig,
   LogEntry,
-  ErrorReporterConfig,
-  ErrorReport,
-  Breadcrumb,
-  ExtendedGLWMConfig,
-  MetricsConfig,
-  MetricEntry,
-  MetricType,
-  TimingMeasurement,
 } from './utils';

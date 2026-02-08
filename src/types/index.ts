@@ -2,7 +2,7 @@
 // WALLET TYPES
 // ============================================
 
-export type WalletProvider = 'metamask' | 'walletconnect' | 'phantom' | 'coinbase' | 'custom';
+export type WalletProvider = 'metamask' | 'phantom' | 'coinbase' | 'custom';
 
 export type ChainId = number; // EIP-155 chain ID
 
@@ -137,7 +137,7 @@ export interface RPCConfig {
 
 export interface MintingPortalConfig {
   url: string; // Minting page URL
-  mode: 'webview' | 'redirect' | 'iframe';
+  mode: 'iframe' | 'redirect';
   width?: number; // WebView dimensions
   height?: number;
   onClose?: () => void;

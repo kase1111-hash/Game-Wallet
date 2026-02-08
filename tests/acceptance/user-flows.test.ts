@@ -17,7 +17,7 @@ const createConfig = (overrides?: Partial<GLWMConfig>): GLWMConfig => ({
   },
   mintingPortal: {
     url: 'https://mint.example.com',
-    mode: 'webview',
+    mode: 'iframe',
   },
   ...overrides,
 });
@@ -219,7 +219,7 @@ describe('Acceptance Tests: Game Developer Integration', () => {
         licenseContract: '',
         chainId: 0,
         rpcProvider: { provider: 'alchemy' as const },
-        mintingPortal: { url: '', mode: 'webview' as const },
+        mintingPortal: { url: '', mode: 'iframe' as const },
       };
 
       const result = GLWM.validateConfig(invalidConfig);
@@ -252,7 +252,7 @@ describe('Acceptance Tests: Multi-Chain Support', () => {
 });
 
 describe('Acceptance Tests: Minting Portal Modes', () => {
-  const modes = ['webview', 'iframe', 'redirect'] as const;
+  const modes = ['iframe', 'redirect'] as const;
 
   modes.forEach((mode) => {
     it(`should support ${mode} minting portal mode`, () => {
@@ -285,7 +285,7 @@ describe('Acceptance Tests: Error Scenarios', () => {
       licenseContract: '0x1234567890123456789012345678901234567890',
       chainId: 137,
       rpcProvider: undefined as unknown as GLWMConfig['rpcProvider'],
-      mintingPortal: { url: 'https://mint.example.com', mode: 'webview' as const },
+      mintingPortal: { url: 'https://mint.example.com', mode: 'iframe' as const },
     };
 
     expect(() => new GLWM(config)).toThrow();
