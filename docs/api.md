@@ -1,581 +1,262 @@
 # GLWM SDK API Reference
 
-Complete API documentation for the Game License Wallet Module SDK.
-
-## Table of Contents
-
-- [GLWM Class](#glwm-class)
-  - [Constructor](#constructor)
-  - [Static Methods](#static-methods)
-  - [Instance Methods](#instance-methods)
-- [Configuration](#configuration)
-  - [GLWMConfig](#glwmconfig)
-  - [RPCProviderConfig](#rpcproviderconfig)
-  - [MintingPortalConfig](#mintingportalconfig)
-  - [CacheConfig](#cacheconfig)
-- [Types](#types)
-  - [GLWMState](#glwmstate)
-  - [WalletSession](#walletsession)
-  - [LicenseStatus](#licensestatus)
-  - [Events](#events)
-- [Errors](#errors)
-
----
-
 ## GLWM Class
 
-The main entry point for the SDK.
+Main entry point for the SDK.
 
 ```typescript
 import { GLWM } from '@glwm/sdk';
-```
-
-### Constructor
-
-```typescript
-new GLWM(config: GLWMConfig)
-```
-
-Creates a new GLWM instance.
-
-**Parameters:**
-- `config` (GLWMConfig) - Configuration object for the SDK
-
-**Throws:**
-- `GLWMError` - If configuration is invalid
-
-**Example:**
-```typescript
-const glwm = new GLWM({
-  licenseContract: '0x1234567890123456789012345678901234567890',
-  chainId: 137,
-  rpcProvider: {
-    provider: 'alchemy',
-    apiKey: 'your-api-key',
-  },
-  mintingPortal: {
-    url: 'https://mint.example.com',
-    mode: 'webview',
-  },
-});
+const glwm = new GLWM(config);
 ```
 
 ### Static Methods
 
-#### `getVersion()`
-
-Returns the SDK version string.
-
-```typescript
-static getVersion(): string
-```
-
-**Returns:** Version string in semver format (e.g., "0.1.0")
-
-**Example:**
-```typescript
-console.log(GLWM.getVersion()); // "0.1.0"
-```
-
----
-
-#### `validateConfig()`
-
-Validates a configuration object without creating an instance.
-
-```typescript
-static validateConfig(config: GLWMConfig): { valid: boolean; errors: string[] }
-```
-
-**Parameters:**
-- `config` (GLWMConfig) - Configuration object to validate
-
-**Returns:** Object with:
-- `valid` (boolean) - Whether the configuration is valid
-- `errors` (string[]) - Array of validation error messages
-
-**Example:**
-```typescript
-const result = GLWM.validateConfig(myConfig);
-if (!result.valid) {
-  console.error('Config errors:', result.errors);
-}
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `getVersion()` | `static getVersion(): string` | Returns SDK version (e.g., `"0.1.0"`) |
+| `validateConfig()` | `static validateConfig(config: GLWMConfig): { valid: boolean; errors: string[] }` | Validates config without creating an instance |
 
 ### Instance Methods
 
-#### `initialize()`
-
-Initializes the SDK, connecting to the RPC provider.
-
-```typescript
-async initialize(): Promise<void>
-```
-
-**Throws:**
-- `GLWMError` - If initialization fails
-
-**Example:**
-```typescript
-await glwm.initialize();
-```
-
----
-
-#### `dispose()`
-
-Cleans up resources and disconnects.
-
-```typescript
-async dispose(): Promise<void>
-```
-
-**Example:**
-```typescript
-await glwm.dispose();
-```
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `initialize()` | `async initialize(): Promise<void>` | Connects to RPC provider, transitions to `awaiting_wallet` |
+| `dispose()` | `async dispose(): Promise<void>` | Disconnects wallet, cleans up resources |
+| `getState()` | `getState(): GLWMState` | Returns current SDK state |
+| `subscribe()` | `subscribe(listener: (state: GLWMState) => void): () => void` | Subscribe to state changes; returns unsubscribe fn |
+| `on()` | `on<T>(event: T, handler: EventHandler<T>): () => void` | Subscribe to specific events |
+| `connectWallet()` | `async connectWallet(provider?: WalletProvider): Promise<WalletConnection>` | Connect a wallet |
+| `disconnectWallet()` | `async disconnectWallet(): Promise<void>` | Disconnect the current wallet |
+| `getWalletSession()` | `getWalletSession(): WalletSession` | Get current wallet session info |
+| `verifyLicense()` | `async verifyLicense(address?: string): Promise<LicenseVerificationResult>` | Verify NFT license ownership |
+| `verifyAndPlay()` | `async verifyAndPlay(provider?: WalletProvider): Promise<LicenseVerificationResult>` | Connect + verify in one call; opens portal if no license |
+| `openMintingPortal()` | `openMintingPortal(): void` | Opens the minting portal (iframe or redirect) |
+| `closeMintingPortal()` | `closeMintingPortal(): void` | Closes the minting portal |
+| `getAvailableProviders()` | `getAvailableProviders(): WalletProvider[]` | List detected wallet providers |
+| `isProviderAvailable()` | `isProviderAvailable(provider: WalletProvider): boolean` | Check if a specific provider is available |
+| `clearCache()` | `clearCache(): void` | Clear the verification cache |
 
 ---
 
-#### `getState()`
-
-Returns the current SDK state.
-
-```typescript
-getState(): GLWMState
-```
-
-**Returns:** Current state object
-
-**Example:**
-```typescript
-const state = glwm.getState();
-console.log(state.status); // 'uninitialized' | 'initializing' | 'awaiting_wallet' | etc.
-```
-
----
-
-#### `subscribe()`
-
-Subscribes to state changes.
-
-```typescript
-subscribe(listener: (state: GLWMState) => void): () => void
-```
-
-**Parameters:**
-- `listener` - Callback function called on state changes
-
-**Returns:** Unsubscribe function
-
-**Example:**
-```typescript
-const unsubscribe = glwm.subscribe((state) => {
-  console.log('State changed:', state.status);
-});
-
-// Later...
-unsubscribe();
-```
-
----
-
-#### `on()`
-
-Subscribes to specific events.
-
-```typescript
-on<T extends GLWMEvent['type']>(
-  event: T,
-  handler: EventHandler<T>
-): () => void
-```
-
-**Parameters:**
-- `event` - Event type to listen for
-- `handler` - Event handler function
-
-**Returns:** Unsubscribe function
-
-**Example:**
-```typescript
-const unsubscribe = glwm.on('WALLET_CONNECTED', (event) => {
-  console.log('Wallet connected:', event.address);
-});
-```
-
----
-
-#### `connectWallet()`
-
-Initiates wallet connection.
-
-```typescript
-async connectWallet(provider?: WalletProvider): Promise<WalletConnection>
-```
-
-**Parameters:**
-- `provider` (optional) - Specific wallet provider to use
-
-**Returns:** Wallet connection details
-
-**Example:**
-```typescript
-const connection = await glwm.connectWallet('metamask');
-console.log('Connected:', connection.address);
-```
-
----
-
-#### `disconnectWallet()`
-
-Disconnects the current wallet.
-
-```typescript
-async disconnectWallet(): Promise<void>
-```
-
-**Example:**
-```typescript
-await glwm.disconnectWallet();
-```
-
----
-
-#### `getWalletSession()`
-
-Returns current wallet session information.
-
-```typescript
-getWalletSession(): WalletSession
-```
-
-**Returns:** Current wallet session
-
-**Example:**
-```typescript
-const session = glwm.getWalletSession();
-if (session.isConnected) {
-  console.log('Address:', session.connection?.address);
-}
-```
-
----
-
-#### `verifyLicense()`
-
-Verifies NFT license ownership.
-
-```typescript
-async verifyLicense(address?: string): Promise<LicenseStatus>
-```
-
-**Parameters:**
-- `address` (optional) - Address to check (defaults to connected wallet)
-
-**Returns:** License verification result
-
-**Example:**
-```typescript
-const status = await glwm.verifyLicense();
-if (status.isValid) {
-  console.log('License valid! Token ID:', status.tokenId);
-}
-```
-
----
-
-#### `openMintingPortal()`
-
-Opens the minting portal.
-
-```typescript
-openMintingPortal(options?: MintingPortalOptions): void
-```
-
-**Parameters:**
-- `options` (optional) - Portal configuration overrides
-
-**Example:**
-```typescript
-glwm.openMintingPortal({
-  onSuccess: (tokenId) => console.log('Minted:', tokenId),
-  onCancel: () => console.log('Minting cancelled'),
-});
-```
-
----
-
-#### `closeMintingPortal()`
-
-Closes the minting portal.
-
-```typescript
-closeMintingPortal(): void
-```
-
----
-
-#### `getAvailableProviders()`
-
-Returns list of available wallet providers.
-
-```typescript
-getAvailableProviders(): WalletProvider[]
-```
-
-**Returns:** Array of available provider names
-
-**Example:**
-```typescript
-const providers = glwm.getAvailableProviders();
-// ['metamask', 'walletconnect', ...]
-```
-
----
-
-#### `isProviderAvailable()`
-
-Checks if a specific wallet provider is available.
-
-```typescript
-isProviderAvailable(provider: WalletProvider): boolean
-```
-
-**Parameters:**
-- `provider` - Provider name to check
-
-**Returns:** Whether the provider is available
-
----
-
-#### `clearCache()`
-
-Clears the verification cache.
-
-```typescript
-clearCache(): void
-```
-
----
-
-## Configuration
+## Configuration Types
 
 ### GLWMConfig
 
-Main configuration interface.
-
 ```typescript
 interface GLWMConfig {
-  // Required
-  licenseContract: string;        // ERC721 contract address
-  chainId: number;                // Target chain ID
-  rpcProvider: RPCProviderConfig; // RPC configuration
-  mintingPortal: MintingPortalConfig; // Minting portal config
-
-  // Optional
-  cacheConfig?: CacheConfig;      // Cache settings
-  logLevel?: 'debug' | 'info' | 'warn' | 'error' | 'silent';
-
-  // Callbacks
-  onError?: (error: GLWMError) => void;
+  licenseContract: string;              // ERC-721 contract address
+  chainId: ChainId;                     // EIP-155 chain ID (e.g. 137)
+  rpcProvider: RPCConfig;
+  mintingPortal: MintingPortalConfig;
+  cacheConfig?: CacheConfig;
+  analytics?: AnalyticsConfig;
+  onLicenseVerified?: (result: LicenseVerificationResult) => void;
   onWalletConnected?: (connection: WalletConnection) => void;
-  onWalletDisconnected?: () => void;
-  onLicenseVerified?: (status: LicenseStatus) => void;
+  onError?: (error: GLWMError) => void;
 }
 ```
 
-### RPCProviderConfig
-
-RPC provider configuration.
+### RPCConfig
 
 ```typescript
-type RPCProviderConfig =
-  | { provider: 'alchemy'; apiKey: string }
-  | { provider: 'infura'; apiKey: string }
-  | { provider: 'custom'; customUrl: string };
-```
-
-**Examples:**
-```typescript
-// Alchemy
-{ provider: 'alchemy', apiKey: 'your-key' }
-
-// Infura
-{ provider: 'infura', apiKey: 'your-key' }
-
-// Custom RPC
-{ provider: 'custom', customUrl: 'https://your-rpc.com' }
+interface RPCConfig {
+  provider: 'alchemy' | 'infura' | 'custom';
+  apiKey?: string;            // Required for alchemy/infura
+  customUrl?: string;         // Required for custom
+  fallbackUrls?: string[];
+  timeout?: number;           // ms, default 30000
+  retryAttempts?: number;     // default 3
+}
 ```
 
 ### MintingPortalConfig
 
-Minting portal configuration.
-
 ```typescript
 interface MintingPortalConfig {
-  url: string;                           // Portal URL
-  mode: 'webview' | 'iframe' | 'redirect'; // Display mode
-  width?: number;                        // Portal width (iframe/webview)
-  height?: number;                       // Portal height (iframe/webview)
+  url: string;                // Minting page URL
+  mode: 'iframe' | 'redirect';
+  width?: number;             // iframe dimensions
+  height?: number;
+  onClose?: () => void;
+  autoCloseOnMint?: boolean;  // default true
 }
 ```
 
 ### CacheConfig
 
-Cache configuration.
-
 ```typescript
 interface CacheConfig {
-  enabled: boolean;    // Enable/disable caching
-  ttlSeconds: number;  // Cache TTL in seconds
-  storageKey: string;  // LocalStorage key prefix
+  enabled: boolean;
+  ttlSeconds: number;
+  storageKey: string;         // localStorage key prefix
 }
 ```
 
 ---
 
-## Types
+## State Types
 
-### GLWMState
-
-SDK state object.
+### GLWMState (discriminated union)
 
 ```typescript
-interface GLWMState {
-  status:
-    | 'uninitialized'
-    | 'initializing'
-    | 'awaiting_wallet'
-    | 'connecting_wallet'
-    | 'verifying_license'
-    | 'minting'
-    | 'ready'
-    | 'error';
-  error: GLWMError | null;
-  wallet: WalletConnection | null;
-  license: LicenseStatus | null;
+type GLWMState =
+  | { status: 'uninitialized' }
+  | { status: 'initializing' }
+  | { status: 'awaiting_wallet' }
+  | { status: 'connecting_wallet'; provider: WalletProvider }
+  | { status: 'verifying_license'; address: string }
+  | { status: 'license_valid'; license: LicenseNFT }
+  | { status: 'no_license'; address: string }
+  | { status: 'minting_portal_open' }
+  | { status: 'minting_in_progress'; transactionHash: string }
+  | { status: 'error'; error: GLWMError };
+```
+
+### WalletProvider
+
+```typescript
+type WalletProvider = 'metamask' | 'phantom' | 'coinbase' | 'custom';
+```
+
+### WalletConnection
+
+```typescript
+interface WalletConnection {
+  address: string;      // Checksummed (0x...)
+  chainId: ChainId;
+  provider: WalletProvider;
+  connectedAt: number;  // Unix timestamp
+  sessionId: string;    // UUID
 }
 ```
 
 ### WalletSession
 
-Wallet session information.
-
 ```typescript
 interface WalletSession {
+  connection: WalletConnection | null;
   isConnected: boolean;
   isConnecting: boolean;
-  connection: WalletConnection | null;
-  error: Error | null;
+  error: WalletError | null;
 }
-```
-
-### WalletConnection
-
-Connected wallet details.
-
-```typescript
-interface WalletConnection {
-  address: string;
-  chainId: number;
-  provider: WalletProvider;
-}
-```
-
-### WalletProvider
-
-Supported wallet providers.
-
-```typescript
-type WalletProvider =
-  | 'metamask'
-  | 'walletconnect'
-  | 'phantom'
-  | 'coinbase';
-```
-
-### LicenseStatus
-
-License verification result.
-
-```typescript
-interface LicenseStatus {
-  isValid: boolean;
-  tokenId: string | null;
-  owner: string | null;
-  expiresAt: Date | null;
-  metadata: Record<string, unknown> | null;
-}
-```
-
-### Events
-
-Available event types.
-
-```typescript
-type GLWMEventType =
-  | 'WALLET_CONNECTED'
-  | 'WALLET_DISCONNECTED'
-  | 'LICENSE_VERIFIED'
-  | 'MINT_STARTED'
-  | 'MINT_COMPLETED'
-  | 'MINT_FAILED'
-  | 'OPEN_MINTING_PORTAL'
-  | 'CLOSE_MINTING_PORTAL'
-  | 'ERROR';
-```
-
-**Event Payloads:**
-
-```typescript
-// WALLET_CONNECTED
-{ type: 'WALLET_CONNECTED'; address: string; chainId: number; provider: string }
-
-// LICENSE_VERIFIED
-{ type: 'LICENSE_VERIFIED'; isValid: boolean; tokenId: string | null }
-
-// MINT_COMPLETED
-{ type: 'MINT_COMPLETED'; tokenId: string; transactionHash: string }
-
-// ERROR
-{ type: 'ERROR'; error: GLWMError }
 ```
 
 ---
 
-## Errors
+## License Types
+
+### LicenseVerificationResult
+
+```typescript
+interface LicenseVerificationResult {
+  isValid: boolean;
+  license: LicenseNFT | null;
+  checkedAt: number;
+  blockNumber: number;
+  reason?: LicenseInvalidReason;
+}
+```
+
+### LicenseNFT
+
+```typescript
+interface LicenseNFT {
+  tokenId: string;
+  contractAddress: string;
+  owner: string;
+  metadata: LicenseMetadata;
+  mintedAt?: number;
+  transactionHash?: string;
+}
+```
+
+### LicenseMetadata & Attributes
+
+```typescript
+interface LicenseMetadata {
+  name: string;
+  description: string;
+  image?: string;             // IPFS URI or HTTP URL
+  attributes: LicenseAttributes;
+}
+
+interface LicenseAttributes {
+  version: string;
+  edition: LicenseEdition;
+  mintedBy: string;
+  gameId: string;
+  soulbound?: boolean;
+  expiresAt?: number;
+  tier?: string;
+  crossGameAccess?: string[];
+}
+
+type LicenseEdition = 'standard' | 'deluxe' | 'ultimate' | 'founders' | 'limited';
+type LicenseInvalidReason = 'no_license_found' | 'license_expired' | 'wrong_chain' | 'contract_paused' | 'verification_failed';
+```
+
+---
+
+## Error Types
 
 ### GLWMError
 
-Base error class for SDK errors.
-
 ```typescript
-class GLWMError extends Error {
-  code: string;
-  details?: Record<string, unknown>;
+interface GLWMError {
+  code: GLWMErrorCode;
+  message: string;
+  details?: unknown;
+  recoverable: boolean;
+  suggestedAction?: string;
 }
 ```
 
 ### Error Codes
 
-| Code | Description |
-|------|-------------|
-| `INVALID_CONFIG` | Configuration validation failed |
-| `RPC_CONNECTION_FAILED` | Failed to connect to RPC provider |
-| `WALLET_CONNECTION_FAILED` | Failed to connect wallet |
-| `WALLET_NOT_FOUND` | Requested wallet provider not found |
-| `CHAIN_MISMATCH` | Connected to wrong chain |
-| `LICENSE_VERIFICATION_FAILED` | License verification failed |
-| `MINTING_FAILED` | Minting transaction failed |
-| `USER_REJECTED` | User rejected the action |
+| Code | Recoverable | Description |
+|------|:-----------:|-------------|
+| `WALLET_NOT_FOUND` | yes | Wallet provider not detected |
+| `WALLET_CONNECTION_REJECTED` | yes | User rejected connection |
+| `WALLET_DISCONNECTED` | yes | Wallet disconnected unexpectedly |
+| `CHAIN_MISMATCH` | yes | Wrong chain, needs switch |
+| `RPC_ERROR` | yes | RPC provider call failed |
+| `CONTRACT_ERROR` | no | Smart contract call failed |
+| `VERIFICATION_FAILED` | yes | License check failed |
+| `MINT_FAILED` | no | Mint transaction reverted |
+| `MINT_REJECTED` | yes | User rejected mint transaction |
+| `INSUFFICIENT_FUNDS` | yes | Not enough ETH/MATIC for mint |
+| `USER_CANCELLED` | yes | User cancelled action |
+| `NETWORK_ERROR` | yes | General network failure |
+| `CONFIGURATION_ERROR` | no | Invalid SDK configuration |
+
+---
+
+## Events
+
+### GLWMEvent (discriminated union)
+
+```typescript
+type GLWMEvent =
+  | { type: 'INITIALIZE'; config: GLWMConfig }
+  | { type: 'CONNECT_WALLET'; provider: WalletProvider }
+  | { type: 'WALLET_CONNECTED'; connection: WalletConnection }
+  | { type: 'WALLET_DISCONNECTED' }
+  | { type: 'VERIFY_LICENSE' }
+  | { type: 'LICENSE_VERIFIED'; result: LicenseVerificationResult }
+  | { type: 'OPEN_MINTING_PORTAL' }
+  | { type: 'MINT_STARTED'; transactionHash: string }
+  | { type: 'MINT_COMPLETED'; result: MintResult }
+  | { type: 'CLOSE_MINTING_PORTAL' }
+  | { type: 'ERROR'; error: GLWMError }
+  | { type: 'RESET' };
+```
 
 ---
 
 ## Supported Chains
 
-| Chain | Chain ID | Network |
-|-------|----------|---------|
+| Chain | ID | Network |
+|-------|----|---------|
 | Ethereum | 1 | Mainnet |
 | Polygon | 137 | Mainnet |
 | Arbitrum | 42161 | One |
@@ -583,23 +264,3 @@ class GLWMError extends Error {
 | Base | 8453 | Mainnet |
 | Sepolia | 11155111 | Testnet |
 | Mumbai | 80001 | Testnet |
-
----
-
-## TypeScript Support
-
-The SDK is written in TypeScript and provides full type definitions.
-
-```typescript
-import {
-  GLWM,
-  GLWMConfig,
-  GLWMState,
-  GLWMError,
-  WalletConnection,
-  WalletSession,
-  WalletProvider,
-  LicenseStatus,
-  GLWMEvent,
-} from '@glwm/sdk';
-```
