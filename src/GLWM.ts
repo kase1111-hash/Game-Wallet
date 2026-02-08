@@ -9,9 +9,6 @@ import type {
   ChainId,
   LicenseVerificationResult,
   LicenseNFT,
-  MintConfig,
-  MintRequest,
-  MintResult,
   CacheConfig,
 } from './types';
 import { RPCProvider } from './rpc';
@@ -38,7 +35,7 @@ const DEFAULT_CACHE_CONFIG: CacheConfig = {
  *   licenseContract: '0x1234...',
  *   chainId: 137,
  *   rpcProvider: { provider: 'alchemy', apiKey: 'xxx' },
- *   mintingPortal: { url: 'https://mint.mygame.com', mode: 'webview' }
+ *   mintingPortal: { url: 'https://mint.mygame.com', mode: 'iframe' }
  * });
  *
  * await glwm.initialize();
@@ -279,22 +276,15 @@ export class GLWM {
 
   /**
    * Check if a specific wallet provider is available
-   *
-   * Note: WalletConnect is not yet implemented and will return false.
    */
   isProviderAvailable(provider: WalletProvider): boolean {
     if (!this.walletConnector) {
       // Fallback detection when SDK not initialized
       if (typeof window === 'undefined') {
-        // No browser wallets available in non-browser environments
         return false;
       }
       if (provider === 'metamask') {
         return 'ethereum' in window;
-      }
-      if (provider === 'walletconnect') {
-        // WalletConnect is not yet implemented
-        return false;
       }
       return false;
     }
@@ -439,43 +429,6 @@ export class GLWM {
     } else {
       this.setState({ status: 'awaiting_wallet' });
     }
-  }
-
-  /**
-   * Get current mint configuration and pricing
-   *
-   * Note: This method requires contract ABI integration which is not yet implemented.
-   * Use the minting portal for now, which handles configuration internally.
-   *
-   * @throws GLWMError with code 'CONTRACT_ERROR' indicating feature not available
-   */
-  async getMintConfig(): Promise<MintConfig> {
-    this.ensureInitialized();
-
-    throw this.createError(
-      'CONTRACT_ERROR',
-      'getMintConfig() requires contract ABI integration. Use openMintingPortal() instead.',
-      false
-    );
-  }
-
-  /**
-   * Programmatically initiate mint (advanced usage)
-   *
-   * Note: Direct minting is not yet implemented. Use openMintingPortal() for
-   * the full minting flow which handles wallet signing and transaction management.
-   *
-   * @param _request - Mint request parameters (unused until implemented)
-   * @throws GLWMError with code 'CONTRACT_ERROR' indicating feature not available
-   */
-  async mint(_request: MintRequest): Promise<MintResult> {
-    this.ensureInitialized();
-
-    throw this.createError(
-      'CONTRACT_ERROR',
-      'Direct minting not yet implemented. Use openMintingPortal() for minting.',
-      false
-    );
   }
 
   // ============================================

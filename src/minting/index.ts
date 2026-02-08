@@ -1,1 +1,1 @@
-export { MintingPortal, fetchMintConfig, executeMint } from './MintingPortal';
+export { MintingPortal } from './MintingPortal';

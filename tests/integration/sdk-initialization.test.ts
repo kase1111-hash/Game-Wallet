@@ -1,4 +1,4 @@
-import { GLWM, GLWMConfig, LogLevel, Logger, ErrorReporter } from '../../src';
+import { GLWM, GLWMConfig, LogLevel, Logger } from '../../src';
 
 describe('SDK Initialization Integration', () => {
   const validConfig: GLWMConfig = {
@@ -10,7 +10,7 @@ describe('SDK Initialization Integration', () => {
     },
     mintingPortal: {
       url: 'https://mint.example.com',
-      mode: 'webview',
+      mode: 'iframe',
     },
     cacheConfig: {
       enabled: true,
@@ -21,7 +21,6 @@ describe('SDK Initialization Integration', () => {
 
   beforeEach(() => {
     Logger.resetInstance();
-    ErrorReporter.resetInstance();
   });
 
   describe('Full SDK lifecycle', () => {
@@ -167,7 +166,7 @@ describe('SDK Initialization Integration', () => {
       const glwm = new GLWM(validConfig);
       const providers = glwm.getAvailableProviders();
 
-      // In Node.js test environment, only walletconnect should be available
+      // In Node.js test environment, no browser wallets are available
       expect(Array.isArray(providers)).toBe(true);
     });
   });
@@ -213,27 +212,3 @@ describe('Logger Integration', () => {
   });
 });
 
-describe('ErrorReporter Integration', () => {
-  beforeEach(() => {
-    ErrorReporter.resetInstance();
-  });
-
-  it('should provide singleton error reporter', () => {
-    const reporter1 = ErrorReporter.getInstance();
-    const reporter2 = ErrorReporter.getInstance();
-
-    expect(reporter1).toBe(reporter2);
-  });
-
-  it('should track user context for error reports', () => {
-    const reporter = ErrorReporter.getInstance();
-
-    reporter.setUser({
-      walletAddress: '0x1234567890123456789012345678901234567890',
-      sessionId: 'test-session-123',
-    });
-
-    // User context is stored for subsequent error reports
-    expect(reporter).toBeInstanceOf(ErrorReporter);
-  });
-});

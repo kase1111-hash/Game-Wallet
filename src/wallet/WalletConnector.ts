@@ -100,14 +100,9 @@ export class WalletConnector {
 
   /**
    * Check if a wallet provider is available
-   *
-   * Note: WalletConnect is not yet implemented and will return false.
-   * Use MetaMask, Coinbase, Phantom, or custom providers for now.
    */
   isProviderAvailable(provider: WalletProvider): boolean {
     if (typeof window === 'undefined') {
-      // No browser-based wallets available in non-browser environments
-      // WalletConnect would require additional implementation
       return false;
     }
 
@@ -118,9 +113,6 @@ export class WalletConnector {
         return Boolean(window.ethereum?.isCoinbaseWallet);
       case 'phantom':
         return Boolean(window.phantom?.ethereum);
-      case 'walletconnect':
-        // WalletConnect is not yet implemented - requires @walletconnect/web3-provider
-        return false;
       case 'custom':
         return Boolean(window.ethereum);
       default:
@@ -130,13 +122,9 @@ export class WalletConnector {
 
   /**
    * Get list of available providers
-   *
-   * Note: Only returns providers that are actually implemented and available.
-   * WalletConnect is excluded until implementation is complete.
    */
   getAvailableProviders(): WalletProvider[] {
     const providers: WalletProvider[] = [];
-    // Exclude 'walletconnect' as it's not yet implemented
     const allProviders: WalletProvider[] = ['metamask', 'coinbase', 'phantom'];
 
     for (const provider of allProviders) {

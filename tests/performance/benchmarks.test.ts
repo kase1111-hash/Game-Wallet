@@ -8,7 +8,7 @@
  * - Cache performance
  */
 
-import { GLWM, GLWMConfig, Cache, Logger, Metrics } from '../../src';
+import { GLWM, GLWMConfig, Cache, Logger } from '../../src';
 
 // Increase timeout for performance tests
 jest.setTimeout(30000);
@@ -22,7 +22,7 @@ const validConfig: GLWMConfig = {
   },
   mintingPortal: {
     url: 'https://mint.example.com',
-    mode: 'webview',
+    mode: 'iframe',
   },
 };
 
@@ -65,7 +65,6 @@ async function benchmark<T>(
 describe('Performance: SDK Initialization', () => {
   beforeEach(() => {
     Logger.resetInstance();
-    Metrics.resetInstance();
   });
 
   it('should initialize SDK instance quickly', async () => {
@@ -202,56 +201,6 @@ describe('Performance: Logger Operations', () => {
     console.log('Context Logger Stats:', stats);
 
     expect(stats.avg).toBeLessThan(0.5);
-  });
-});
-
-describe('Performance: Metrics Collection', () => {
-  beforeEach(() => {
-    Metrics.resetInstance();
-  });
-
-  it('should handle high-volume metric recording', async () => {
-    const metrics = new Metrics({
-      enabled: true,
-      flushIntervalMs: 0,
-      maxBufferSize: 10000,
-    });
-
-    const stats = await benchmark(
-      'Metric increment',
-      () => metrics.increment('test.counter', 1, { tag: 'value' }),
-      1000
-    );
-
-    console.log('Metrics Recording Stats:', stats);
-
-    // Metric recording should be fast
-    expect(stats.avg).toBeLessThan(0.1);
-
-    await metrics.stop();
-  });
-
-  it('should flush metrics efficiently', async () => {
-    const metrics = new Metrics({
-      enabled: true,
-      reporter: async () => {},
-      flushIntervalMs: 0,
-      maxBufferSize: 10000,
-    });
-
-    // Add 1000 metrics
-    for (let i = 0; i < 1000; i++) {
-      metrics.increment('test.counter');
-    }
-
-    const { timeMs } = await measureTime(() => metrics.flush());
-
-    console.log('Metrics Flush (1000 entries):', timeMs, 'ms');
-
-    // Flushing 1000 metrics should be under 50ms
-    expect(timeMs).toBeLessThan(50);
-
-    await metrics.stop();
   });
 });
 
