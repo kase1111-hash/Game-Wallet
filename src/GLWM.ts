@@ -16,6 +16,9 @@ import { WalletConnector } from './wallet';
 import { LicenseVerifier } from './license';
 import { MintingPortal } from './minting';
 import { Cache } from './utils';
+import { Logger } from './utils/Logger';
+
+const logger = Logger.getInstance().child('GLWM');
 
 type StateListener = (state: GLWMState) => void;
 type EventHandler<T extends GLWMEvent['type']> = (payload: Extract<GLWMEvent, { type: T }>) => void;
@@ -540,6 +543,7 @@ export class GLWM {
   }
 
   private setState(newState: GLWMState): void {
+    logger.debug(`State: ${this.state.status} → ${newState.status}`);
     this.state = newState;
     for (const listener of this.stateListeners) {
       listener(this.state);
@@ -567,11 +571,38 @@ export class GLWM {
 
   private handleError(error: unknown): GLWMError {
     if (this.isGLWMError(error)) {
+      logger.error(`${error.code}: ${error.message}`);
       return error;
     }
 
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return this.createError('NETWORK_ERROR', message);
+    logger.error('Unhandled error', { error: message });
+
+    // Classify the error based on message content
+    const code = this.classifyError(message);
+    return this.createError(code, message);
+  }
+
+  private classifyError(message: string): GLWMError['code'] {
+    const lower = message.toLowerCase();
+
+    // User-initiated cancellations
+    if (lower.includes('user rejected') || lower.includes('user denied') || lower.includes('user cancelled')) {
+      return 'USER_CANCELLED';
+    }
+
+    // Contract/on-chain errors
+    if (lower.includes('contract') || lower.includes('revert') || lower.includes('execution reverted') || lower.includes('call exception')) {
+      return 'CONTRACT_ERROR';
+    }
+
+    // Configuration errors
+    if (lower.includes('invalid address') || lower.includes('invalid config') || lower.includes('not initialized')) {
+      return 'CONFIGURATION_ERROR';
+    }
+
+    // Default to network error for genuinely unknown cases
+    return 'NETWORK_ERROR';
   }
 
   private isGLWMError(error: unknown): error is GLWMError {
@@ -584,17 +615,27 @@ export class GLWM {
     );
   }
 
+  private static readonly PORTAL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
   private waitForPortalClose(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        unsubscribe();
+        this.mintingPortal?.close();
+        reject(this.createError('USER_CANCELLED', 'Minting portal timed out after 10 minutes'));
+      }, GLWM.PORTAL_TIMEOUT_MS);
+
       // Subscribe first to avoid race condition where portal closes
       // between check and subscription
       const unsubscribe = this.on('CLOSE_MINTING_PORTAL', () => {
+        clearTimeout(timeoutId);
         unsubscribe();
         resolve();
       });
 
       // Then check if already closed (handles race condition)
       if (!this.mintingPortal?.isPortalOpen()) {
+        clearTimeout(timeoutId);
         unsubscribe();
         resolve();
       }

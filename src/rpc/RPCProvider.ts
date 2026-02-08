@@ -1,5 +1,8 @@
 import { JsonRpcProvider, Network } from 'ethers';
 import type { RPCConfig, ChainId, GLWMError } from '../types';
+import { Logger } from '../utils/Logger';
+
+const logger = Logger.getInstance().child('RPCProvider');
 
 /**
  * RPC Provider abstraction supporting multiple providers with fallback
@@ -63,7 +66,11 @@ export class RPCProvider {
       (p): p is JsonRpcProvider => p !== null
     );
 
-    for (const provider of allProviders) {
+    for (let providerIndex = 0; providerIndex < allProviders.length; providerIndex++) {
+      const provider = allProviders[providerIndex]!;
+      if (providerIndex > 0) {
+        logger.info(`Switching to fallback provider ${providerIndex}`);
+      }
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
           const result = await this.withTimeout(fn(provider), timeout);
@@ -73,6 +80,7 @@ export class RPCProvider {
 
           // Wait before retry with exponential backoff
           if (attempt < maxAttempts - 1) {
+            logger.warn(`RPC call failed (attempt ${attempt + 1}/${maxAttempts}), retrying`, { error: lastError.message });
             await this.delay(Math.pow(2, attempt) * 1000);
           }
         }
