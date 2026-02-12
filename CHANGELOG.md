@@ -16,9 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Core Features
 - **GLWM Class**: Main SDK entry point with full lifecycle management
-- **Wallet Connection**: Support for MetaMask, WalletConnect, Phantom, and Coinbase Wallet
+- **Wallet Connection**: Support for MetaMask, Phantom, Coinbase Wallet, and custom providers
 - **License Verification**: ERC721-based NFT license ownership verification
-- **Minting Portal**: Integrated minting experience via webview, iframe, or redirect modes
+- **Minting Portal**: Integrated minting experience via iframe or redirect modes
 - **Multi-Chain Support**: Ethereum, Polygon, Arbitrum, Optimism, and Base networks
 
 #### State Management
@@ -36,7 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RPC Provider abstraction (Alchemy, Infura, custom endpoints)
 - Configurable caching with TTL support
 - Logging system with configurable levels and custom handlers
-- Error reporting with Sentry integration support
 - Secure configuration management with environment variables
 
 #### Testing
@@ -46,16 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Jest test framework with TypeScript support
 
 #### Build & CI/CD
-- Makefile for build automation
 - GitHub Actions CI pipeline (lint, typecheck, test, build)
 - GitHub Actions release pipeline (npm publish, Docker, GitHub releases)
 - Docker support for containerized development
 - Semantic versioning implementation
 
 #### Configuration
-- Environment-specific configurations (development, staging, production)
-- Support for multiple RPC providers
-- Flexible minting portal configuration
+- Support for multiple RPC providers with fallback URLs
+- Flexible minting portal configuration (iframe, redirect)
 
 #### Documentation
 - Comprehensive README with quickstart guide

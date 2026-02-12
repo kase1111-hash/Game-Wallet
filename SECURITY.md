@@ -19,7 +19,7 @@ The GLWM SDK implements comprehensive input validation:
 | `rpcProvider.apiKey` | Non-empty string when required |
 | `rpcProvider.customUrl` | Valid HTTPS URL |
 | `mintingPortal.url` | Valid URL |
-| `mintingPortal.mode` | Enum: 'webview', 'iframe', 'redirect' |
+| `mintingPortal.mode` | Enum: 'iframe', 'redirect' |
 
 All inputs are validated before SDK initialization using `GLWM.validateConfig()`.
 

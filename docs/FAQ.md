@@ -23,9 +23,9 @@ GLWM supports the following networks:
 ### What wallet providers are supported?
 
 - **MetaMask** - Browser extension and mobile
-- **WalletConnect** - Multi-wallet protocol (v2)
 - **Phantom** - Primarily Solana, with EVM support
 - **Coinbase Wallet** - Browser extension and mobile
+- **Custom** - Any EIP-1193 compatible provider
 
 ### Is GLWM free to use?
 
@@ -92,7 +92,7 @@ if (!result.valid) {
 
 ### Does GLWM work in Node.js (server-side)?
 
-GLWM is primarily designed for client-side use where wallet interactions occur. For server-side license verification, you can use the RPC provider directly to query the blockchain, but wallet connection features require a browser environment.
+GLWM is primarily designed for client-side use where wallet interactions occur. For server-side license verification, you can use the `RPCProvider` and `LicenseVerifier` components directly to query the blockchain, but wallet connection features require a browser environment.
 
 ---
 
@@ -103,7 +103,7 @@ GLWM is primarily designed for client-side use where wallet interactions occur. 
 ```typescript
 // Get available providers
 const providers = glwm.getAvailableProviders();
-// Returns: ['metamask', 'walletconnect', ...]
+// Returns: ['metamask', 'coinbase', ...]
 
 // Check specific provider
 if (glwm.isProviderAvailable('metamask')) {
@@ -116,10 +116,10 @@ if (glwm.isProviderAvailable('metamask')) {
 GLWM will emit a `CHAIN_MISMATCH` error. You can handle this:
 
 ```typescript
-glwm.on('ERROR', (event) => {
+glwm.on('ERROR', async (event) => {
   if (event.error.code === 'CHAIN_MISMATCH') {
-    // Prompt user to switch networks
-    console.log('Please switch to the correct network');
+    // Request chain switch via the SDK
+    await glwm.switchChain(137); // Switch to Polygon
   }
 });
 ```
@@ -132,18 +132,18 @@ glwm.on('WALLET_DISCONNECTED', () => {
   console.log('Wallet disconnected');
 });
 
-// Or use the callback in config
+// Or use the onWalletConnected callback in config
 const glwm = new GLWM({
   ...config,
-  onWalletDisconnected: () => {
-    // Handle disconnection
+  onWalletConnected: (connection) => {
+    console.log('Connected:', connection.address);
   },
 });
 ```
 
 ### Can users stay connected across page refreshes?
 
-The SDK supports session persistence through the cache configuration:
+The SDK supports verification result caching through the cache configuration:
 
 ```typescript
 cacheConfig: {
@@ -165,45 +165,46 @@ GLWM queries your ERC721 contract to check if the connected wallet owns any toke
 
 1. Calls `balanceOf(address)` to check ownership
 2. If balance > 0, calls `tokenOfOwnerByIndex(address, 0)` to get token ID
-3. Returns a `LicenseStatus` object with verification results
+3. Returns a `LicenseVerificationResult` object with verification results
 
 ### Can I verify a license for a different address?
 
 ```typescript
 // Verify connected wallet
-const status = await glwm.verifyLicense();
+const result = await glwm.verifyLicense();
 
-// Verify specific address
-const status = await glwm.verifyLicense('0x1234...');
+// Verify a specific address (read-only, no wallet connection needed)
+const result = await glwm.checkLicenseForAddress('0x1234...');
 ```
 
 ### How long are verification results cached?
 
-By default, results are cached based on your `cacheConfig.ttlSeconds` setting. You can:
+By default, results are cached for 5 minutes (300 seconds) based on your `cacheConfig.ttlSeconds` setting. You can:
 
 ```typescript
 // Clear cache manually
 glwm.clearCache();
 
+// Force a fresh verification
+const result = await glwm.verifyLicenseFresh();
+
 // Or disable caching entirely
 cacheConfig: {
   enabled: false,
-  ...
+  ttlSeconds: 0,
+  storageKey: 'glwm',
 }
 ```
 
 ### What if verification fails?
 
 ```typescript
-const status = await glwm.verifyLicense();
+const result = await glwm.verifyLicense();
 
-if (!status.isValid) {
-  // No license found - prompt to mint
-  glwm.openMintingPortal({
-    onSuccess: (tokenId) => {
-      console.log('License minted:', tokenId);
-    },
-  });
+if (!result.isValid) {
+  console.log('Reason:', result.reason);
+  // Open minting portal for user to get a license
+  await glwm.openMintingPortal();
 }
 ```
 
@@ -216,24 +217,21 @@ if (!status.isValid) {
 | Mode | Description | Best For |
 |------|-------------|----------|
 | `iframe` | Embedded in page | Web apps with space |
-| `webview` | Floating overlay | Mobile/desktop apps |
 | `redirect` | Full page navigation | Simple integrations |
 
-### How do I handle minting callbacks?
+### How do I handle minting events?
 
 ```typescript
-glwm.openMintingPortal({
-  onSuccess: (tokenId) => {
-    console.log('Minted token:', tokenId);
-    // Re-verify license
-    await glwm.verifyLicense();
-  },
-  onCancel: () => {
-    console.log('User cancelled minting');
-  },
-  onError: (error) => {
-    console.error('Minting error:', error);
-  },
+// Listen for mint completion
+glwm.on('MINT_COMPLETED', async (event) => {
+  console.log('Minted token:', event.result.tokenId);
+  // Re-verify license
+  const result = await glwm.verifyLicenseFresh();
+});
+
+// Listen for portal close
+glwm.on('CLOSE_MINTING_PORTAL', () => {
+  console.log('Portal closed');
 });
 ```
 
@@ -276,10 +274,19 @@ window.parent.postMessage({
 Configure timeouts in your RPC provider setup and handle errors gracefully:
 
 ```typescript
-glwm.on('ERROR', (event) => {
-  if (event.error.code === 'RPC_CONNECTION_FAILED') {
-    // Show retry option to user
-  }
+const glwm = new GLWM({
+  ...config,
+  rpcProvider: {
+    provider: 'alchemy',
+    apiKey: 'your-key',
+    timeout: 15000,       // 15 second timeout
+    retryAttempts: 5,     // Retry up to 5 times
+  },
+  onError: (error) => {
+    if (error.code === 'RPC_ERROR') {
+      // Show retry option to user
+    }
+  },
 });
 ```
 
@@ -307,38 +314,32 @@ Verification queries the blockchain directly, making results trustworthy. Howeve
 
 ## Debugging Questions
 
-### How do I enable debug logging?
-
-```typescript
-const glwm = new GLWM({
-  ...config,
-  logLevel: 'debug', // 'debug' | 'info' | 'warn' | 'error' | 'silent'
-});
-```
-
 ### How do I track SDK state changes?
 
 ```typescript
 glwm.subscribe((state) => {
-  console.log('State changed:', {
-    status: state.status,
-    wallet: state.wallet,
-    license: state.license,
-    error: state.error,
-  });
+  console.log('State changed:', state.status);
+
+  // Use discriminated union to access status-specific data
+  if (state.status === 'error') {
+    console.log('Error:', state.error);
+  }
+  if (state.status === 'license_valid') {
+    console.log('License:', state.license);
+  }
 });
 ```
 
-### How do I report errors to my monitoring service?
+### How do I use the Logger utility?
 
 ```typescript
-import { ErrorReporter } from '@glwm/sdk';
+import { Logger, LogLevel } from '@glwm/sdk';
 
-const reporter = ErrorReporter.getInstance({
-  enabled: true,
-  customReporter: async (report) => {
-    // Send to your service (Sentry, LogRocket, etc.)
-    await myMonitoringService.captureError(report);
-  },
+const logger = new Logger({
+  level: LogLevel.DEBUG,
+  prefix: 'MyGame',
 });
+
+logger.debug('SDK initialized');
+logger.error('Something went wrong', { details: '...' });
 ```

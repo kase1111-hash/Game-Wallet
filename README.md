@@ -59,12 +59,12 @@ GLWM is a plug-and-play SDK enabling game developers to implement NFT-based lice
 
 | Component | Responsibility | Dependencies |
 |-----------|---------------|--------------|
-| WalletAuthLayer | Wallet connection, session management | ethers.js, WalletConnect SDK |
-| LicenseVerificationLayer | On-chain NFT ownership queries | RPC Provider |
-| MintingPortalController | WebView orchestration, mint transaction handling | React (web), platform WebView |
-| RPCProviderAbstraction | Unified interface for multiple RPC providers | Provider SDKs |
-| EventBus | Cross-component communication | None (internal) |
-| LocalCache | Wallet address persistence, verification caching | Platform storage API |
+| WalletConnector | Wallet connection, session management, chain switching | ethers.js |
+| LicenseVerifier | On-chain NFT ownership queries (ERC721) | RPCProvider |
+| MintingPortal | iframe/redirect portal orchestration, postMessage handling | None |
+| RPCProvider | Unified interface for multiple RPC providers with fallback | ethers.js |
+| Cache | TTL-based verification result caching | None (internal) |
+| Logger | Configurable logging with levels and custom handlers | None (internal) |
 
 ---
 
@@ -77,7 +77,7 @@ GLWM is a plug-and-play SDK enabling game developers to implement NFT-based lice
 // WALLET TYPES
 // ============================================
 
-type WalletProvider = 'metamask' | 'walletconnect' | 'phantom' | 'coinbase' | 'custom';
+type WalletProvider = 'metamask' | 'phantom' | 'coinbase' | 'custom';
 
 type ChainId = number; // EIP-155 chain ID
 
@@ -105,8 +105,8 @@ interface LicenseNFT {
   contractAddress: string;   // License collection contract
   owner: string;             // Current owner address
   metadata: LicenseMetadata;
-  mintedAt: number;          // Block timestamp
-  transactionHash: string;   // Mint transaction
+  mintedAt?: number;         // Block timestamp (requires event query)
+  transactionHash?: string;  // Mint transaction hash (requires event query)
 }
 
 interface LicenseMetadata {
@@ -212,8 +212,8 @@ interface RPCConfig {
 
 interface MintingPortalConfig {
   url: string;               // Minting page URL
-  mode: 'webview' | 'redirect' | 'iframe';
-  width?: number;            // WebView dimensions
+  mode: 'iframe' | 'redirect';
+  width?: number;            // Portal dimensions (iframe mode)
   height?: number;
   onClose?: () => void;
   autoCloseOnMint?: boolean; // default true
@@ -309,7 +309,7 @@ type GLWMEvent =
  *   licenseContract: '0x1234...',
  *   chainId: 137,
  *   rpcProvider: { provider: 'alchemy', apiKey: 'xxx' },
- *   mintingPortal: { url: 'https://mint.mygame.com', mode: 'webview' }
+ *   mintingPortal: { url: 'https://mint.mygame.com', mode: 'iframe' }
  * });
  * 
  * await glwm.initialize();
@@ -427,17 +427,6 @@ class GLWM {
    */
   closeMintingPortal(): void;
   
-  /**
-   * Get current mint configuration and pricing
-   */
-  async getMintConfig(): Promise<MintConfig>;
-  
-  /**
-   * Programmatically initiate mint (advanced usage)
-   * Most implementations should use openMintingPortal() instead
-   */
-  async mint(request: MintRequest): Promise<MintResult>;
-  
   // ============================================
   // STATE & EVENTS
   // ============================================
@@ -479,167 +468,6 @@ class GLWM {
    */
   static validateConfig(config: GLWMConfig): { valid: boolean; errors: string[] };
 }
-```
-
-### 3.2 React Hooks (Optional Package: @glwm/react)
-
-```typescript
-/**
- * Main hook for GLWM integration in React
- */
-function useGLWM(): {
-  // State
-  state: GLWMState;
-  walletSession: WalletSession;
-  license: LicenseNFT | null;
-  isLoading: boolean;
-  error: GLWMError | null;
-  
-  // Actions
-  connect: (provider?: WalletProvider) => Promise<void>;
-  disconnect: () => Promise<void>;
-  verify: () => Promise<LicenseVerificationResult>;
-  openMintPortal: () => Promise<void>;
-  verifyAndPlay: () => Promise<LicenseVerificationResult>;
-};
-
-/**
- * Provider component for GLWM context
- */
-function GLWMProvider(props: {
-  config: GLWMConfig;
-  children: React.ReactNode;
-}): JSX.Element;
-
-/**
- * Wallet connection button component
- */
-function WalletConnectButton(props: {
-  onConnect?: (connection: WalletConnection) => void;
-  onError?: (error: WalletError) => void;
-  className?: string;
-}): JSX.Element;
-
-/**
- * License status display component
- */
-function LicenseStatus(props: {
-  showDetails?: boolean;
-  onMintClick?: () => void;
-  className?: string;
-}): JSX.Element;
-```
-
-### 3.3 Unity SDK Interface (C#)
-
-```csharp
-namespace GLWM
-{
-    /// <summary>
-    /// Main SDK interface for Unity integration
-    /// </summary>
-    public class GLWMClient : MonoBehaviour
-    {
-        // Events
-        public event Action<WalletConnection> OnWalletConnected;
-        public event Action OnWalletDisconnected;
-        public event Action<LicenseVerificationResult> OnLicenseVerified;
-        public event Action<MintResult> OnMintCompleted;
-        public event Action<GLWMError> OnError;
-        
-        // Configuration
-        public void Initialize(GLWMConfig config);
-        public void Dispose();
-        
-        // Main workflow
-        public async Task<LicenseVerificationResult> VerifyAndPlayAsync();
-        
-        // Wallet
-        public async Task<WalletConnection> ConnectWalletAsync(WalletProvider? preferred = null);
-        public async Task DisconnectWalletAsync();
-        public WalletSession GetWalletSession();
-        
-        // License
-        public async Task<LicenseVerificationResult> VerifyLicenseAsync();
-        public async Task<LicenseNFT> GetLicenseDetailsAsync(string tokenId);
-        
-        // Minting
-        public void OpenMintingPortal();
-        public void CloseMintingPortal();
-        public async Task<MintConfig> GetMintConfigAsync();
-        
-        // State
-        public GLWMState CurrentState { get; }
-    }
-}
-```
-
-### 3.4 Unreal Engine Interface (C++)
-
-```cpp
-// GLWM.h
-#pragma once
-
-#include "CoreMinimal.h"
-#include "GLWMTypes.h"
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWalletConnected, FWalletConnection, Connection);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnWalletDisconnected);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLicenseVerified, FLicenseVerificationResult, Result);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGLWMError, FGLWMError, Error);
-
-UCLASS(BlueprintType)
-class GLWM_API UGLWMSubsystem : public UGameInstanceSubsystem
-{
-    GENERATED_BODY()
-    
-public:
-    // Delegates
-    UPROPERTY(BlueprintAssignable)
-    FOnWalletConnected OnWalletConnected;
-    
-    UPROPERTY(BlueprintAssignable)
-    FOnWalletDisconnected OnWalletDisconnected;
-    
-    UPROPERTY(BlueprintAssignable)
-    FOnLicenseVerified OnLicenseVerified;
-    
-    UPROPERTY(BlueprintAssignable)
-    FOnGLWMError OnError;
-    
-    // Initialization
-    UFUNCTION(BlueprintCallable, Category = "GLWM")
-    void Initialize(const FGLWMConfig& Config);
-    
-    // Main workflow
-    UFUNCTION(BlueprintCallable, Category = "GLWM")
-    void VerifyAndPlay();
-    
-    // Wallet
-    UFUNCTION(BlueprintCallable, Category = "GLWM")
-    void ConnectWallet(EWalletProvider PreferredProvider = EWalletProvider::None);
-    
-    UFUNCTION(BlueprintCallable, Category = "GLWM")
-    void DisconnectWallet();
-    
-    UFUNCTION(BlueprintPure, Category = "GLWM")
-    FWalletSession GetWalletSession() const;
-    
-    // License
-    UFUNCTION(BlueprintCallable, Category = "GLWM")
-    void VerifyLicense();
-    
-    // Minting Portal
-    UFUNCTION(BlueprintCallable, Category = "GLWM")
-    void OpenMintingPortal();
-    
-    UFUNCTION(BlueprintCallable, Category = "GLWM")
-    void CloseMintingPortal();
-    
-    // State
-    UFUNCTION(BlueprintPure, Category = "GLWM")
-    EGLWMState GetCurrentState() const;
-};
 ```
 
 ---
@@ -1840,7 +1668,7 @@ export { LicenseVerificationLayer, VerificationConfig };
 
 interface PortalConfig {
   url: string;
-  mode: 'webview' | 'redirect' | 'iframe';
+  mode: 'iframe' | 'redirect';
   width?: number;
   height?: number;
   autoCloseOnMint?: boolean;
@@ -1874,52 +1702,15 @@ class MintingPortalController {
     const url = this.buildPortalUrl(walletAddress, chainId);
     
     switch (this.config.mode) {
-      case 'webview':
-        await this.openWebView(url);
+      case 'iframe':
+        await this.openIframe(url);
         break;
       case 'redirect':
         this.openRedirect(url);
         break;
-      case 'iframe':
-        await this.openIframe(url);
-        break;
     }
     
     this.setupMessageListener();
-  }
-  
-  private async openWebView(url: string): Promise<void> {
-    // For Electron/NW.js/Tauri desktop apps
-    if (typeof window !== 'undefined' && (window as any).electronAPI) {
-      await (window as any).electronAPI.openWebView({
-        url,
-        width: this.config.width,
-        height: this.config.height
-      });
-      return;
-    }
-    
-    // Fallback to popup window
-    const left = (screen.width - this.config.width!) / 2;
-    const top = (screen.height - this.config.height!) / 2;
-    
-    this.portal = window.open(
-      url,
-      'glwm_mint_portal',
-      `width=${this.config.width},height=${this.config.height},left=${left},top=${top},popup=true`
-    );
-    
-    if (!this.portal) {
-      throw new Error('Failed to open minting portal - popup may be blocked');
-    }
-    
-    // Monitor for close
-    const checkClosed = setInterval(() => {
-      if ((this.portal as Window)?.closed) {
-        clearInterval(checkClosed);
-        this.handlePortalClosed();
-      }
-    }, 500);
   }
   
   private openRedirect(url: string): void {
@@ -1995,9 +1786,7 @@ class MintingPortalController {
   }
   
   close(): void {
-    if (this.config.mode === 'webview' && this.portal instanceof Window) {
-      this.portal.close();
-    } else if (this.config.mode === 'iframe') {
+    if (this.config.mode === 'iframe') {
       const overlay = document.getElementById('glwm-portal-overlay');
       overlay?.remove();
     }
