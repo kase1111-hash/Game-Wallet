@@ -9,6 +9,7 @@ import type {
   GLWMError,
 } from '../types';
 import { Logger } from '../utils/Logger';
+import { isValidAddress } from '../utils/helpers';
 
 const logger = Logger.getInstance().child('LicenseVerifier');
 
@@ -47,6 +48,10 @@ export class LicenseVerifier {
   async verifyLicense(address: string): Promise<LicenseVerificationResult> {
     if (!this.contract) {
       throw this.createError('CONTRACT_ERROR', 'License contract not initialized');
+    }
+
+    if (!isValidAddress(address)) {
+      throw this.createError('CONFIGURATION_ERROR', `Invalid Ethereum address: ${address}`);
     }
 
     const contract = this.contract;
@@ -146,24 +151,28 @@ export class LicenseVerifier {
     }
 
     const contract = this.contract;
-    const licenses: LicenseNFT[] = [];
 
     const balance = await this.rpcProvider.call(async () => {
       const balanceOf = contract.getFunction('balanceOf');
       return balanceOf(address);
     });
 
+    // Fetch all token IDs first
+    const tokenIds: bigint[] = [];
     for (let i = 0n; i < balance; i++) {
       const tokenId = await this.rpcProvider.call(async () => {
         const tokenOfOwnerByIndex = contract.getFunction('tokenOfOwnerByIndex');
         return tokenOfOwnerByIndex(address, i);
       });
-
-      const license = await this.getLicenseById(tokenId.toString(), address);
-      licenses.push(license);
+      tokenIds.push(tokenId);
     }
 
-    return licenses;
+    // Fetch license details in parallel
+    const results = await Promise.all(
+      tokenIds.map((tokenId) => this.getLicenseById(tokenId.toString(), address))
+    );
+
+    return results;
   }
 
   /**
@@ -212,7 +221,11 @@ export class LicenseVerifier {
 
       logger.debug('Fetching metadata', { tokenUri, resolvedUrl: url });
 
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!response.ok) {
         throw new Error(`Failed to fetch metadata: ${response.status}`);
       }

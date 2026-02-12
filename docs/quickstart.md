@@ -1,81 +1,125 @@
-# GLWM SDK - Quickstart Guide
+# Quick Start Guide
 
-Get up and running with the Game License Wallet Module in minutes.
+Get from `npm install` to a working integration in 5 minutes.
 
-## Installation
+## 1. Install
 
 ```bash
 npm install @glwm/sdk
 ```
 
-## Basic Setup
+## 2. Initialize
 
 ```typescript
 import { GLWM } from '@glwm/sdk';
 
-// Create SDK instance
 const glwm = new GLWM({
   licenseContract: '0x1234567890123456789012345678901234567890',
   chainId: 137, // Polygon
   rpcProvider: {
     provider: 'alchemy',
-    apiKey: 'your-alchemy-api-key',
+    apiKey: process.env.ALCHEMY_KEY!,
   },
   mintingPortal: {
-    url: 'https://your-mint-site.com',
+    url: 'https://mint.mygame.com',
     mode: 'iframe',
   },
+  onError: (error) => console.error('[GLWM]', error.code, error.message),
 });
 
-// Initialize
 await glwm.initialize();
 ```
 
-## Connect Wallet
+## 3. Verify and Play
+
+The simplest integration — one call handles everything:
 
 ```typescript
-// Connect wallet (defaults to MetaMask)
-const connection = await glwm.connectWallet();
-console.log('Connected:', connection.address);
-
-// Or specify provider
-await glwm.connectWallet('metamask');
-```
-
-## Verify License
-
-```typescript
-const result = await glwm.verifyLicense();
+const result = await glwm.verifyAndPlay();
 
 if (result.isValid) {
-  console.log('License found! Token ID:', result.license?.tokenId);
-  // Grant access to game
+  console.log('License valid! Token:', result.license?.tokenId);
+  startGame();
 } else {
-  console.log('No license found, reason:', result.reason);
-  // Show minting option
+  console.log('No valid license.', result.reason);
 }
 ```
 
-## Open Minting Portal
+`verifyAndPlay()` automatically:
+1. Connects the wallet if not already connected
+2. Checks for a valid license NFT
+3. Opens the minting portal if no license exists
+4. Re-verifies after the portal closes
+
+## 4. Step-by-Step (Advanced)
+
+For more control, call each method individually:
 
 ```typescript
-// Open the minting portal (configured in GLWMConfig)
-await glwm.openMintingPortal();
+// Connect wallet
+const connection = await glwm.connectWallet('metamask');
+console.log('Connected:', connection.address, 'on chain', connection.chainId);
 
-// Listen for mint completion
-glwm.on('MINT_COMPLETED', (event) => {
-  console.log('License minted:', event.result.tokenId);
-});
+// Verify license
+const result = await glwm.verifyLicense();
 
-// Close portal programmatically if needed
-glwm.closeMintingPortal();
+if (result.isValid) {
+  startGame();
+} else {
+  // Open minting portal manually
+  await glwm.openMintingPortal();
+}
 ```
 
-## Listen to Events
+## React Example
+
+```tsx
+import { useEffect, useState } from 'react';
+import { GLWM, GLWMState } from '@glwm/sdk';
+
+const config = {
+  licenseContract: '0x1234567890123456789012345678901234567890',
+  chainId: 137,
+  rpcProvider: { provider: 'alchemy' as const, apiKey: 'YOUR_KEY' },
+  mintingPortal: { url: 'https://mint.mygame.com', mode: 'iframe' as const },
+};
+
+function App() {
+  const [glwm] = useState(() => new GLWM(config));
+  const [state, setState] = useState<GLWMState>(glwm.getState());
+
+  useEffect(() => {
+    glwm.initialize();
+    const unsubscribe = glwm.subscribe(setState);
+    return () => {
+      unsubscribe();
+      glwm.dispose();
+    };
+  }, [glwm]);
+
+  const handlePlay = async () => {
+    const result = await glwm.verifyAndPlay();
+    if (result.isValid) {
+      // Start your game
+    }
+  };
+
+  return (
+    <div>
+      <p>Status: {state.status}</p>
+      <button onClick={handlePlay} disabled={state.status === 'uninitialized'}>
+        Play
+      </button>
+    </div>
+  );
+}
+```
+
+## Listening to Events
 
 ```typescript
 // Subscribe to all state changes
-glwm.subscribe((state) => {
+const unsubscribe = glwm.subscribe((state) => {
   console.log('State:', state.status);
 });
 
@@ -87,126 +131,40 @@ glwm.on('WALLET_CONNECTED', (event) => {
 glwm.on('LICENSE_VERIFIED', (event) => {
   console.log('License valid:', event.result.isValid);
 });
+
+glwm.on('MINT_COMPLETED', (event) => {
+  console.log('Mint result:', event.result);
+});
 ```
 
-## Complete Example
+## Minting Portal Protocol
 
-```typescript
-import { GLWM } from '@glwm/sdk';
+Your minting portal communicates with the SDK via `postMessage`. The SDK sends wallet info when the portal is ready, and the portal sends back mint events:
 
-async function initGame() {
-  // 1. Create and initialize SDK
-  const glwm = new GLWM({
-    licenseContract: process.env.LICENSE_CONTRACT!,
-    chainId: 137,
-    rpcProvider: {
-      provider: 'alchemy',
-      apiKey: process.env.ALCHEMY_KEY!,
-    },
-    mintingPortal: {
-      url: process.env.MINT_PORTAL_URL!,
-      mode: 'iframe',
-    },
-    onError: (error) => console.error('GLWM Error:', error.message),
-  });
+```javascript
+// Portal → SDK messages:
+{ type: 'PORTAL_READY' }
+{ type: 'MINT_STARTED', payload: { transactionHash: '0x...' } }
+{ type: 'MINT_COMPLETED', payload: { success: true, tokenId: '42' } }
+{ type: 'MINT_FAILED', payload: { code: 'MINT_FAILED', message: '...' } }
+{ type: 'PORTAL_CLOSED' }
 
-  await glwm.initialize();
-
-  // 2. Connect wallet
-  try {
-    await glwm.connectWallet();
-  } catch (error) {
-    console.log('Please connect your wallet');
-    return;
-  }
-
-  // 3. Verify license
-  const result = await glwm.verifyLicense();
-
-  if (result.isValid) {
-    // 4a. Start game
-    startGame();
-  } else {
-    // 4b. Open minting portal and wait for completion
-    glwm.on('MINT_COMPLETED', async () => {
-      // Re-verify after minting
-      const freshResult = await glwm.verifyLicenseFresh();
-      if (freshResult.isValid) {
-        startGame();
-      }
-    });
-    await glwm.openMintingPortal();
-  }
-}
-
-// Or use the convenience method that handles the full flow:
-async function initGameSimple() {
-  const glwm = new GLWM({ /* config */ });
-  await glwm.initialize();
-
-  const result = await glwm.verifyAndPlay();
-  if (result.isValid) {
-    startGame();
-  }
-}
-
-function startGame() {
-  console.log('Starting game...');
-}
-
-initGame();
+// SDK → Portal message (sent after PORTAL_READY):
+{ type: 'WALLET_INFO', wallet: '0x...' }
 ```
 
-## React Example
+## Troubleshooting
 
-```tsx
-import { useEffect, useState, useCallback } from 'react';
-import { GLWM, type GLWMState } from '@glwm/sdk';
+**"Invalid configuration"** — Check that `licenseContract` is a valid 42-character hex address, `chainId` is a positive number, and `rpcProvider` has either `apiKey` (for Alchemy/Infura) or `customUrl` (for custom). Use `GLWM.validateConfig(config)` to see specific errors.
 
-const config = {
-  licenseContract: '0x...',
-  chainId: 137,
-  rpcProvider: { provider: 'alchemy' as const, apiKey: 'your-key' },
-  mintingPortal: { url: 'https://mint.example.com', mode: 'iframe' as const },
-};
+**"Failed to connect to RPC provider"** — Verify your API key is correct and supports the configured `chainId`. Test the endpoint directly with a `curl` or `fetch` call.
 
-function App() {
-  const [glwm] = useState(() => new GLWM(config));
-  const [state, setState] = useState<GLWMState>({ status: 'uninitialized' });
+**Wallet not found** — The user doesn't have the wallet extension installed. Check with `glwm.isProviderAvailable('metamask')` before attempting connection.
 
-  useEffect(() => {
-    glwm.initialize();
-    const unsubscribe = glwm.subscribe(setState);
-    return () => {
-      unsubscribe();
-      glwm.dispose();
-    };
-  }, [glwm]);
+**Chain mismatch** — The wallet is on a different chain than `chainId`. Use `glwm.switchChain(chainId)` to prompt the user to switch, or handle via the `onError` callback.
 
-  const handleConnect = useCallback(() => glwm.connectWallet(), [glwm]);
-  const handleVerify = useCallback(() => glwm.verifyLicense(), [glwm]);
-  const handleMint = useCallback(() => glwm.openMintingPortal(), [glwm]);
-
-  return (
-    <div>
-      <p>Status: {state.status}</p>
-      {state.status === 'license_valid' && (
-        <p>License: {state.license.tokenId}</p>
-      )}
-      {state.status === 'error' && (
-        <p>Error: {state.error.message}</p>
-      )}
-      <button onClick={handleConnect}>Connect Wallet</button>
-      <button onClick={handleVerify}>Verify License</button>
-      <button onClick={handleMint}>Get License</button>
-    </div>
-  );
-}
-```
+**Stale verification** — Clear the cache with `glwm.clearCache()` or use `glwm.verifyLicenseFresh()` to bypass it.
 
 ## Next Steps
 
-- [API Reference](./api.md) - Complete API documentation
-- [Architecture](./architecture.md) - System design and data flows
-- [FAQ](./FAQ.md) - Common questions answered
-- [Troubleshooting](./troubleshooting.md) - Solve common issues
+- [API Reference](./api.md) — full method signatures and type definitions

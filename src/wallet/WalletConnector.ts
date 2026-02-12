@@ -7,6 +7,9 @@ import type {
   ChainId,
 } from '../types';
 import { generateSessionId, checksumAddress } from '../utils/helpers';
+import { Logger } from '../utils/Logger';
+
+const logger = Logger.getInstance().child('WalletConnector');
 
 /**
  * Type guard for errors with code and message properties (EIP-1193 errors)
@@ -142,6 +145,8 @@ export class WalletConnector {
   async connect(preferredProvider?: WalletProvider): Promise<WalletConnection> {
     const provider = preferredProvider ?? this.detectBestProvider();
 
+    logger.debug(`Connecting to ${provider}`);
+
     this.updateSession({
       isConnecting: true,
       error: null,
@@ -178,6 +183,7 @@ export class WalletConnector {
 
       // Check chain mismatch
       if (chainId !== this.expectedChainId) {
+        logger.warn(`Chain mismatch: connected to ${chainId}, expected ${this.expectedChainId}`);
         this.onChainMismatch?.(chainId, this.expectedChainId);
       }
 
@@ -203,6 +209,7 @@ export class WalletConnector {
         error: null,
       });
 
+      logger.debug(`Connected to ${provider}`, { address: connection.address, chainId: connection.chainId });
       return connection;
     } catch (error) {
       const walletError = this.handleConnectionError(error, provider);

@@ -8,7 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial SDK architecture and core components
+- Unit tests for all 4 core modules: RPCProvider, WalletConnector, LicenseVerifier, MintingPortal
+- Integration test for `verifyAndPlay()` orchestration flow
+- Shared test mocks for EIP-1193 provider, RPC provider, ERC-721 contract, browser globals
+
+### Changed
+- README replaced with focused developer README (~3KB, down from 97KB)
+- `docs/quickstart.md` rewritten with accurate API and troubleshooting
+- `docs/api.md` rewritten with accurate types matching actual source code
+
+### Removed
+- Unused utilities: `Metrics.ts`, `ErrorReporter.ts`, `Config.ts` and their tests
+- Stub methods: `getMintConfig()`, `mint()`, `fetchMintConfig()`, `executeMint()`
+- Phantom `webview` portal mode (was just an alias for iframe)
+- `walletconnect` provider type (no implementation existed)
+- Infrastructure files: `Dockerfile`, `docker-compose.yml`, `Makefile`, `config/` directory
+- Obsolete docs: `architecture.md`, `FAQ.md`, `troubleshooting.md`, `user-stories.md`, `compliance.md`, `code-audit.md`
+- Redundant community files: `SUPPORT.md`, `LICENSE.md` (MIT license remains in `LICENSE`)
 
 ## [0.1.0] - 2024-01-10
 
@@ -16,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Core Features
 - **GLWM Class**: Main SDK entry point with full lifecycle management
-- **Wallet Connection**: Support for MetaMask, Phantom, Coinbase Wallet, and custom providers
+- **Wallet Connection**: Support for MetaMask, Phantom, and Coinbase Wallet
 - **License Verification**: ERC721-based NFT license ownership verification
 - **Minting Portal**: Integrated minting experience via iframe or redirect modes
 - **Multi-Chain Support**: Ethereum, Polygon, Arbitrum, Optimism, and Base networks
@@ -24,47 +40,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### State Management
 - Reactive state management with subscription support
 - Event-driven architecture with typed events
-- Automatic state persistence and recovery
 
 #### Developer Experience
 - TypeScript-first API with full type definitions
 - Comprehensive configuration validation
 - Static `validateConfig()` method for pre-initialization checks
-- Version information via `getVersion()` static method
 
 #### Infrastructure
 - RPC Provider abstraction (Alchemy, Infura, custom endpoints)
 - Configurable caching with TTL support
-- Logging system with configurable levels and custom handlers
-- Secure configuration management with environment variables
-
-#### Testing
-- Unit tests for all core components (107+ tests)
-- Integration tests for SDK lifecycle
-- Acceptance tests for user flows
+- Logging system with configurable levels
 - Jest test framework with TypeScript support
-
-#### Build & CI/CD
 - GitHub Actions CI pipeline (lint, typecheck, test, build)
-- GitHub Actions release pipeline (npm publish, Docker, GitHub releases)
-- Docker support for containerized development
-- Semantic versioning implementation
-
-#### Configuration
-- Support for multiple RPC providers with fallback URLs
-- Flexible minting portal configuration (iframe, redirect)
-
-#### Documentation
-- Comprehensive README with quickstart guide
-- User stories documentation
-- API documentation
-- Environment configuration guide
-
-### Security
-- Input validation for all configuration options
-- Address validation for Ethereum addresses
-- Secure storage of sensitive configuration
-- No hardcoded secrets or API keys
+- tsup build for dual CJS/ESM output
 
 ### Dependencies
 - ethers.js v6.x for blockchain interactions
@@ -74,25 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## Version History
-
-| Version | Date | Description |
-|---------|------|-------------|
-| 0.1.0 | 2024-01-10 | Initial release with core SDK functionality |
-
----
-
-## Migration Guides
-
-### Upgrading to 0.1.0
-
-This is the initial release. No migration required.
-
----
-
 ## Links
 
 - [GitHub Repository](https://github.com/kase1111-hash/Game-Wallet)
 - [npm Package](https://www.npmjs.com/package/@glwm/sdk)
-- [Documentation](https://github.com/kase1111-hash/Game-Wallet#readme)
-- [Issue Tracker](https://github.com/kase1111-hash/Game-Wallet/issues)

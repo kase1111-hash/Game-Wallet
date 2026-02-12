@@ -4,6 +4,9 @@ import type {
   MintError,
   GLWMError,
 } from '../types';
+import { Logger } from '../utils/Logger';
+
+const logger = Logger.getInstance().child('MintingPortal');
 
 /**
  * Message types for portal communication
@@ -111,6 +114,7 @@ export class MintingPortal {
     }
 
     this.isOpen = true;
+    logger.debug(`Portal opened in ${this.config.mode} mode`);
   }
 
   /**
@@ -136,6 +140,7 @@ export class MintingPortal {
     }
 
     this.isOpen = false;
+    logger.debug('Portal closed');
     this.config.onClose?.();
     this.onClose?.();
   }

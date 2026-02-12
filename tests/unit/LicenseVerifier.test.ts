@@ -213,7 +213,7 @@ describe('LicenseVerifier', () => {
 
       await verifier.verifyLicense(WALLET_ADDRESS);
 
-      expect(mockFetch).toHaveBeenCalledWith('https://ipfs.io/ipfs/QmTestHash123/metadata.json');
+      expect(mockFetch).toHaveBeenCalledWith('https://ipfs.io/ipfs/QmTestHash123/metadata.json', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
 
     it('should resolve Arweave URI correctly', async () => {
@@ -224,7 +224,7 @@ describe('LicenseVerifier', () => {
 
       await verifier.verifyLicense(WALLET_ADDRESS);
 
-      expect(mockFetch).toHaveBeenCalledWith('https://arweave.net/ArweaveTransactionId');
+      expect(mockFetch).toHaveBeenCalledWith('https://arweave.net/ArweaveTransactionId', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
 
     it('should pass through HTTP URI unchanged', async () => {
@@ -235,7 +235,7 @@ describe('LicenseVerifier', () => {
 
       await verifier.verifyLicense(WALLET_ADDRESS);
 
-      expect(mockFetch).toHaveBeenCalledWith('https://api.example.com/token/1');
+      expect(mockFetch).toHaveBeenCalledWith('https://api.example.com/token/1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     });
 
     it('should return default metadata when fetch fails', async () => {
