@@ -13,8 +13,10 @@ console.log('Config errors:', result.errors);
 // 2. Check SDK state
 console.log('Current state:', glwm.getState());
 
-// 3. Enable debug logging
-const glwm = new GLWM({ ...config, logLevel: 'debug' });
+// 3. Subscribe to state changes for debugging
+glwm.subscribe((state) => {
+  console.log('State:', state.status);
+});
 ```
 
 ---
@@ -30,31 +32,31 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 1. **Invalid contract address**
    ```typescript
-   // ❌ Wrong
+   // Wrong
    licenseContract: '0x123'
    licenseContract: 'my-contract'
 
-   // ✅ Correct (40 hex characters after 0x)
+   // Correct (40 hex characters after 0x)
    licenseContract: '0x1234567890123456789012345678901234567890'
    ```
 
 2. **Invalid chain ID**
    ```typescript
-   // ❌ Wrong
+   // Wrong
    chainId: 0
    chainId: -1
    chainId: '137' // String instead of number
 
-   // ✅ Correct
+   // Correct
    chainId: 137
    ```
 
 3. **Missing RPC provider config**
    ```typescript
-   // ❌ Wrong
+   // Wrong
    rpcProvider: { provider: 'alchemy' } // Missing apiKey
 
-   // ✅ Correct
+   // Correct
    rpcProvider: { provider: 'alchemy', apiKey: 'your-key' }
    // Or
    rpcProvider: { provider: 'custom', customUrl: 'https://...' }
@@ -93,7 +95,7 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 4. **Rate limiting**
    - Check if you've exceeded your RPC provider's rate limits
-   - Consider upgrading your plan or using multiple providers
+   - Consider upgrading your plan or using fallback URLs
 
 ---
 
@@ -124,13 +126,13 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 3. **Mobile browser issues**
    - Some mobile browsers block wallet injections
-   - Use WalletConnect for mobile
+   - Consider using the wallet's built-in browser
 
 ### Error: "User rejected the request"
 
 **Symptoms:**
 - Wallet popup appears but connection fails
-- Error code: `USER_REJECTED`
+- Error code: `WALLET_CONNECTION_REJECTED`
 
 **Solutions:**
 - This is expected behavior when user clicks "Cancel"
@@ -139,7 +141,7 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
   try {
     await glwm.connectWallet();
   } catch (error) {
-    if (error.code === 'USER_REJECTED') {
+    if (error.code === 'WALLET_CONNECTION_REJECTED') {
       // Show friendly message
       console.log('Please connect your wallet to continue');
     }
@@ -158,12 +160,9 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
    ```typescript
    glwm.on('ERROR', async (event) => {
      if (event.error.code === 'CHAIN_MISMATCH') {
-       // Request network switch via wallet
+       // Use the SDK's switchChain method
        try {
-         await window.ethereum.request({
-           method: 'wallet_switchEthereumChain',
-           params: [{ chainId: '0x89' }], // Polygon = 0x89
-         });
+         await glwm.switchChain(137); // Polygon
        } catch (switchError) {
          console.log('Please switch to Polygon network manually');
        }
@@ -194,7 +193,7 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
    console.log('Contract code:', code); // Should not be '0x'
    ```
 
-2. **Contract doesn't implement ERC721**
+2. **Contract doesn't implement ERC721Enumerable**
    - Ensure your contract implements `balanceOf(address)`
    - Ensure your contract implements `tokenOfOwnerByIndex(address, uint256)`
 
@@ -210,17 +209,14 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
    ```typescript
    // Clear cache and re-verify
    glwm.clearCache();
-   const status = await glwm.verifyLicense();
+   const result = await glwm.verifyLicenseFresh();
    ```
 
 2. **Wrong address being checked**
    ```typescript
-   // Verify the correct address
+   // Verify which address is connected
    const session = glwm.getWalletSession();
    console.log('Connected address:', session.connection?.address);
-
-   // Explicitly verify that address
-   const status = await glwm.verifyLicense(session.connection?.address);
    ```
 
 3. **NFT on different network**
@@ -235,7 +231,7 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 **Symptoms:**
 - `openMintingPortal()` does nothing
-- No iframe/popup appears
+- No iframe appears
 
 **Solutions:**
 
@@ -257,8 +253,8 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 ### Portal callbacks not firing
 
 **Symptoms:**
-- Minting completes but `onSuccess` not called
-- No events received from portal
+- Minting completes but no events received
+- No `MINT_COMPLETED` event
 
 **Solutions:**
 
@@ -279,10 +275,12 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 3. **Event listener not registered**
    ```typescript
-   // Ensure you're listening for events
+   // Ensure you're listening for events before opening the portal
    glwm.on('MINT_COMPLETED', (event) => {
      console.log('Mint completed:', event);
    });
+
+   await glwm.openMintingPortal();
    ```
 
 ---
@@ -328,8 +326,11 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 2. **Check for unhandled errors**
    ```typescript
-   glwm.on('ERROR', (event) => {
-     console.error('SDK Error:', event.error);
+   const glwm = new GLWM({
+     ...config,
+     onError: (error) => {
+       console.error('SDK Error:', error.code, error.message);
+     },
    });
    ```
 
@@ -353,20 +354,18 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 2. **Slow RPC provider**
    - Use premium RPC providers (Alchemy, Infura)
-   - Consider using multiple providers with fallback
-
-3. **Multiple unnecessary calls**
+   - Consider using fallback URLs:
    ```typescript
-   // Cache result locally
-   let cachedStatus = null;
-
-   async function getStatus() {
-     if (!cachedStatus) {
-       cachedStatus = await glwm.verifyLicense();
-     }
-     return cachedStatus;
+   rpcProvider: {
+     provider: 'alchemy',
+     apiKey: 'your-key',
+     fallbackUrls: ['https://backup-rpc.com'],
    }
    ```
+
+3. **Multiple unnecessary calls**
+   - Use `verifyLicense()` which checks the cache first
+   - Only use `verifyLicenseFresh()` when you specifically need a fresh result
 
 ### High RPC usage
 
@@ -375,7 +374,9 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 1. **Increase cache TTL**
    ```typescript
    cacheConfig: {
+     enabled: true,
      ttlSeconds: 3600, // 1 hour instead of 5 minutes
+     storageKey: 'glwm',
    }
    ```
 
@@ -389,14 +390,19 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 | Code | Meaning | Solution |
 |------|---------|----------|
-| `INVALID_CONFIG` | Configuration validation failed | Check config against documentation |
-| `RPC_CONNECTION_FAILED` | Cannot connect to RPC | Verify API key and network |
-| `WALLET_CONNECTION_FAILED` | Wallet connection error | Check wallet provider availability |
+| `CONFIGURATION_ERROR` | Configuration validation failed or SDK not initialized | Check config against documentation, ensure `initialize()` was called |
+| `RPC_ERROR` | Cannot connect to RPC | Verify API key and network |
+| `WALLET_CONNECTION_REJECTED` | User rejected wallet connection | Handle gracefully, allow retry |
 | `WALLET_NOT_FOUND` | No wallet provider detected | Prompt user to install wallet |
-| `CHAIN_MISMATCH` | Wrong blockchain network | Prompt user to switch networks |
-| `LICENSE_VERIFICATION_FAILED` | Contract query failed | Verify contract address and ABI |
-| `MINTING_FAILED` | Minting transaction failed | Check transaction details |
-| `USER_REJECTED` | User cancelled action | Handle gracefully, allow retry |
+| `WALLET_DISCONNECTED` | No wallet connected for operation | Connect wallet first |
+| `CHAIN_MISMATCH` | Wrong blockchain network | Use `switchChain()` or prompt user |
+| `VERIFICATION_FAILED` | Contract query failed | Verify contract address and deployment |
+| `CONTRACT_ERROR` | Smart contract call error | Check contract ABI compatibility |
+| `MINT_FAILED` | Minting transaction failed | Check transaction details |
+| `MINT_REJECTED` | User rejected mint transaction | Handle gracefully, allow retry |
+| `INSUFFICIENT_FUNDS` | Wallet balance too low | Prompt user to add funds |
+| `USER_CANCELLED` | User cancelled operation | Handle gracefully, allow retry |
+| `NETWORK_ERROR` | General network issue | Check connectivity, retry |
 
 ---
 
@@ -404,9 +410,13 @@ const glwm = new GLWM({ ...config, logLevel: 'debug' });
 
 If you're still having issues:
 
-1. **Check the logs**
+1. **Subscribe to state and error events**
    ```typescript
-   const glwm = new GLWM({ ...config, logLevel: 'debug' });
+   glwm.subscribe((state) => console.log('State:', state));
+   const glwm = new GLWM({
+     ...config,
+     onError: (error) => console.error('Error:', error),
+   });
    ```
 
 2. **Review documentation**

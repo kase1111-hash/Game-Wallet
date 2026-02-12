@@ -13,7 +13,7 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
 │  │                           GLWM SDK                                   │   │
 │  │  ┌───────────────┐ ┌───────────────┐ ┌───────────────────────────┐  │   │
 │  │  │    State      │ │    Event      │ │      Configuration        │  │   │
-│  │  │   Manager     │ │   Emitter     │ │        Manager            │  │   │
+│  │  │   Manager     │ │   Emitter     │ │        Validation         │  │   │
 │  │  └───────────────┘ └───────────────┘ └───────────────────────────┘  │   │
 │  │                                                                      │   │
 │  │  ┌───────────────┐ ┌───────────────┐ ┌───────────────────────────┐  │   │
@@ -22,8 +22,8 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
 │  │  └───────────────┘ └───────────────┘ └───────────────────────────┘  │   │
 │  │                                                                      │   │
 │  │  ┌───────────────┐ ┌───────────────┐ ┌───────────────────────────┐  │   │
-│  │  │     RPC       │ │    Cache      │ │       Logger /            │  │   │
-│  │  │   Provider    │ │   Manager     │ │    Error Reporter         │  │   │
+│  │  │     RPC       │ │    Cache      │ │       Logger              │  │   │
+│  │  │   Provider    │ │   Manager     │ │                           │  │   │
 │  │  └───────────────┘ └───────────────┘ └───────────────────────────┘  │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
@@ -32,12 +32,13 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                            External Services                                 │
-├─────────────────┬─────────────────┬─────────────────┬───────────────────────┤
-│   Wallet        │   Blockchain    │   Minting       │    Error              │
-│   Providers     │   RPC Nodes     │   Portal        │    Reporting          │
-│  (MetaMask,     │  (Alchemy,      │   (External     │    (Sentry)           │
-│   WalletConnect)│   Infura)       │    Service)     │                       │
-└─────────────────┴─────────────────┴─────────────────┴───────────────────────┘
+├─────────────────┬─────────────────┬─────────────────────────────────────────┤
+│   Wallet        │   Blockchain    │   Minting                               │
+│   Providers     │   RPC Nodes     │   Portal                                │
+│  (MetaMask,     │  (Alchemy,      │   (External                             │
+│   Phantom,      │   Infura)       │    Service)                             │
+│   Coinbase)     │                 │                                         │
+└─────────────────┴─────────────────┴─────────────────────────────────────────┘
 ```
 
 ## Component Architecture
@@ -63,10 +64,10 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
 │                  │ │                  │ │                  │
 │ • Provider       │ │ • Contract       │ │ • URL management │
 │   detection      │ │   interaction    │ │ • Mode handling  │
-│ • Connection     │ │ • Balance check  │ │   (webview,      │
-│   management     │ │ • Token lookup   │ │    iframe,       │
-│ • Chain switch   │ │ • Ownership      │ │    redirect)     │
-│ • Event handling │ │   verification   │ │ • Callbacks      │
+│ • Connection     │ │ • Balance check  │ │   (iframe,       │
+│   management     │ │ • Token lookup   │ │    redirect)     │
+│ • Chain switch   │ │ • Ownership      │ │ • postMessage    │
+│ • Event handling │ │   verification   │ │   communication  │
 └────────┬─────────┘ └────────┬─────────┘ └──────────────────┘
          │                    │
          │                    │
@@ -77,30 +78,22 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
 │ • Provider abstraction (Alchemy/Infura) │
 │ • Connection management                 │
 │ • Request handling with retry           │
-│ • Rate limiting                         │
+│ • Fallback URL support                  │
 └─────────────────────────────────────────┘
 ```
 
 ### Support Components
 
 ```
-┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
-│       Cache       │  │      Logger       │  │   ErrorReporter   │
-│                   │  │                   │  │                   │
-│ • TTL-based cache │  │ • Log levels      │  │ • Sentry support  │
-│ • Verification    │  │ • Custom handlers │  │ • Breadcrumbs     │
-│   result storage  │  │ • Context support │  │ • User context    │
-│ • LocalStorage    │  │ • Formatting      │  │ • Error wrapping  │
-└───────────────────┘  └───────────────────┘  └───────────────────┘
-
-┌───────────────────────────────────────────────────────────────────┐
-│                            Config                                  │
-│                                                                   │
-│ • Environment variable loading                                    │
-│ • Sensitive value masking                                         │
-│ • Configuration building                                          │
-│ • Validation                                                      │
-└───────────────────────────────────────────────────────────────────┘
+┌───────────────────┐  ┌───────────────────┐
+│       Cache       │  │      Logger       │
+│                   │  │                   │
+│ • TTL-based cache │  │ • Log levels      │
+│ • Verification    │  │ • Custom handlers │
+│   result storage  │  │ • Context support │
+│ • Per-address     │  │ • Formatting      │
+│   invalidation    │  │ • Log history     │
+└───────────────────┘  └───────────────────┘
 ```
 
 ## Data Flow Diagrams
@@ -208,7 +201,8 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
      │                │───────────────>│                │
      │                │                │                │
      │<───────────────│                │                │
-     │ LicenseStatus  │                │                │
+     │ LicenseVerification             │                │
+     │ Result         │                │                │
      │ {isValid: true}│                │                │
      │                │                │                │
 ```
@@ -226,7 +220,7 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
      │───────────────>│                │                │
      │                │                │                │
      │                │ Open portal    │                │
-     │                │ (iframe/webview)               │
+     │                │ (iframe/redirect)               │
      │                │───────────────>│                │
      │                │                │                │
      │                │                │ Display mint UI│
@@ -282,60 +276,76 @@ The Game License Wallet Module (GLWM) SDK provides a complete solution for NFT-b
 │VERIFYING_LICENSE│                  │
 └────────┬────────┘                  │
          │                           │
-         ▼                           │
-┌─────────────────┐                  │
-│      READY      │◄─────────────────┘
-└────────┬────────┘    (retry/reconnect)
-         │
-         │ openMintingPortal()
-         ▼
-┌─────────────────┐
-│    MINTING      │
-└────────┬────────┘
-         │
-         │ complete/cancel
-         ▼
-┌─────────────────┐
-│      READY      │
-└─────────────────┘
+    ┌────┴────┐                      │
+    │         │                      │
+  Valid    No license                │
+    │         │                      │
+    ▼         ▼                      │
+┌────────┐  ┌────────────┐          │
+│LICENSE │  │ NO_LICENSE  │◄─────────┘
+│_VALID  │  └─────┬──────┘  (retry/reconnect)
+└────────┘        │
+                  │ openMintingPortal()
+                  ▼
+         ┌──────────────────┐
+         │ MINTING_PORTAL   │
+         │ _OPEN            │
+         └────────┬─────────┘
+                  │
+                  │ mint started
+                  ▼
+         ┌──────────────────┐
+         │ MINTING_IN       │
+         │ _PROGRESS        │
+         └────────┬─────────┘
+                  │
+                  │ complete/cancel
+                  ▼
+         (re-verify → LICENSE_VALID or NO_LICENSE)
 ```
 
 ## Directory Structure
 
 ```
-glwm-sdk/
+Game-Wallet/
 ├── src/
 │   ├── index.ts              # Public exports
 │   ├── GLWM.ts               # Main SDK class
 │   ├── types/
 │   │   └── index.ts          # Type definitions
 │   ├── rpc/
-│   │   └── RPCProvider.ts    # RPC abstraction
+│   │   ├── RPCProvider.ts    # RPC abstraction
+│   │   └── index.ts
 │   ├── wallet/
-│   │   └── WalletConnector.ts # Wallet management
+│   │   ├── WalletConnector.ts # Wallet management
+│   │   └── index.ts
 │   ├── license/
-│   │   └── LicenseVerifier.ts # License verification
+│   │   ├── LicenseVerifier.ts # License verification
+│   │   └── index.ts
 │   ├── minting/
-│   │   └── MintingPortal.ts  # Minting portal
+│   │   ├── MintingPortal.ts  # Minting portal
+│   │   └── index.ts
 │   └── utils/
-│       ├── Cache.ts          # Caching utility
+│       ├── Cache.ts          # TTL-based caching
 │       ├── Logger.ts         # Logging system
-│       ├── ErrorReporter.ts  # Error reporting
-│       ├── Config.ts         # Configuration
-│       └── helpers.ts        # Helper functions
-├── config/
-│   ├── index.ts              # Config loader
-│   ├── development.ts        # Dev settings
-│   ├── staging.ts            # Staging settings
-│   └── production.ts         # Production settings
+│       ├── helpers.ts        # Helper functions
+│       └── index.ts
 ├── tests/
 │   ├── unit/                 # Unit tests
 │   ├── integration/          # Integration tests
-│   └── acceptance/           # Acceptance tests
+│   ├── acceptance/           # Acceptance tests
+│   ├── regression/           # Regression tests
+│   ├── performance/          # Performance benchmarks
+│   └── mocks/                # Test mocks
 ├── docs/
 │   ├── api.md                # API documentation
 │   ├── architecture.md       # This file
-│   └── user-stories.md       # User stories
+│   ├── quickstart.md         # Getting started guide
+│   ├── FAQ.md                # Frequently asked questions
+│   ├── troubleshooting.md    # Common issues & solutions
+│   ├── user-stories.md       # User stories
+│   ├── compliance.md         # Compliance docs
+│   └── code-audit.md         # Code audit findings
 └── .github/
     └── workflows/
         ├── ci.yml            # CI pipeline
@@ -378,35 +388,5 @@ glwm-sdk/
 │  │ • Graceful degradation                                   │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Deployment Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Development                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   Local     │  │   Docker    │  │    Testnet RPC          │  │
-│  │   Build     │  │   Compose   │  │    (Mumbai/Sepolia)     │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Staging                                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   GitHub    │  │   Docker    │  │    Testnet RPC          │  │
-│  │   Actions   │  │   Registry  │  │    (with API keys)      │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Production                                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │    npm      │  │    GHCR     │  │    Mainnet RPC          │  │
-│  │   Registry  │  │   (Docker)  │  │    (Alchemy/Infura)     │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```

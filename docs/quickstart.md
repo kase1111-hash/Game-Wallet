@@ -34,7 +34,7 @@ await glwm.initialize();
 ## Connect Wallet
 
 ```typescript
-// Connect wallet
+// Connect wallet (defaults to MetaMask)
 const connection = await glwm.connectWallet();
 console.log('Connected:', connection.address);
 
@@ -45,13 +45,13 @@ await glwm.connectWallet('metamask');
 ## Verify License
 
 ```typescript
-const status = await glwm.verifyLicense();
+const result = await glwm.verifyLicense();
 
-if (status.isValid) {
-  console.log('License found! Token ID:', status.tokenId);
+if (result.isValid) {
+  console.log('License found! Token ID:', result.license?.tokenId);
   // Grant access to game
 } else {
-  console.log('No license found');
+  console.log('No license found, reason:', result.reason);
   // Show minting option
 }
 ```
@@ -59,14 +59,16 @@ if (status.isValid) {
 ## Open Minting Portal
 
 ```typescript
-glwm.openMintingPortal({
-  onSuccess: (tokenId) => {
-    console.log('License minted:', tokenId);
-  },
-  onCancel: () => {
-    console.log('Minting cancelled');
-  },
+// Open the minting portal (configured in GLWMConfig)
+await glwm.openMintingPortal();
+
+// Listen for mint completion
+glwm.on('MINT_COMPLETED', (event) => {
+  console.log('License minted:', event.result.tokenId);
 });
+
+// Close portal programmatically if needed
+glwm.closeMintingPortal();
 ```
 
 ## Listen to Events
@@ -79,11 +81,11 @@ glwm.subscribe((state) => {
 
 // Listen to specific events
 glwm.on('WALLET_CONNECTED', (event) => {
-  console.log('Wallet connected:', event.address);
+  console.log('Wallet connected:', event.connection.address);
 });
 
 glwm.on('LICENSE_VERIFIED', (event) => {
-  console.log('License valid:', event.isValid);
+  console.log('License valid:', event.result.isValid);
 });
 ```
 
@@ -105,7 +107,7 @@ async function initGame() {
       url: process.env.MINT_PORTAL_URL!,
       mode: 'iframe',
     },
-    onError: (error) => console.error('GLWM Error:', error),
+    onError: (error) => console.error('GLWM Error:', error.message),
   });
 
   await glwm.initialize();
@@ -119,16 +121,32 @@ async function initGame() {
   }
 
   // 3. Verify license
-  const status = await glwm.verifyLicense();
+  const result = await glwm.verifyLicense();
 
-  if (status.isValid) {
+  if (result.isValid) {
     // 4a. Start game
     startGame();
   } else {
-    // 4b. Prompt to mint
-    glwm.openMintingPortal({
-      onSuccess: () => startGame(),
+    // 4b. Open minting portal and wait for completion
+    glwm.on('MINT_COMPLETED', async () => {
+      // Re-verify after minting
+      const freshResult = await glwm.verifyLicenseFresh();
+      if (freshResult.isValid) {
+        startGame();
+      }
     });
+    await glwm.openMintingPortal();
+  }
+}
+
+// Or use the convenience method that handles the full flow:
+async function initGameSimple() {
+  const glwm = new GLWM({ /* config */ });
+  await glwm.initialize();
+
+  const result = await glwm.verifyAndPlay();
+  if (result.isValid) {
+    startGame();
   }
 }
 
@@ -142,25 +160,42 @@ initGame();
 ## React Example
 
 ```tsx
-import { useEffect, useState } from 'react';
-import { GLWM, GLWMState } from '@glwm/sdk';
+import { useEffect, useState, useCallback } from 'react';
+import { GLWM, type GLWMState } from '@glwm/sdk';
+
+const config = {
+  licenseContract: '0x...',
+  chainId: 137,
+  rpcProvider: { provider: 'alchemy' as const, apiKey: 'your-key' },
+  mintingPortal: { url: 'https://mint.example.com', mode: 'iframe' as const },
+};
 
 function App() {
   const [glwm] = useState(() => new GLWM(config));
-  const [state, setState] = useState<GLWMState>(glwm.getState());
+  const [state, setState] = useState<GLWMState>({ status: 'uninitialized' });
 
   useEffect(() => {
     glwm.initialize();
-    return glwm.subscribe(setState);
+    const unsubscribe = glwm.subscribe(setState);
+    return () => {
+      unsubscribe();
+      glwm.dispose();
+    };
   }, [glwm]);
 
-  const handleConnect = () => glwm.connectWallet();
-  const handleVerify = () => glwm.verifyLicense();
-  const handleMint = () => glwm.openMintingPortal();
+  const handleConnect = useCallback(() => glwm.connectWallet(), [glwm]);
+  const handleVerify = useCallback(() => glwm.verifyLicense(), [glwm]);
+  const handleMint = useCallback(() => glwm.openMintingPortal(), [glwm]);
 
   return (
     <div>
       <p>Status: {state.status}</p>
+      {state.status === 'license_valid' && (
+        <p>License: {state.license.tokenId}</p>
+      )}
+      {state.status === 'error' && (
+        <p>Error: {state.error.message}</p>
+      )}
       <button onClick={handleConnect}>Connect Wallet</button>
       <button onClick={handleVerify}>Verify License</button>
       <button onClick={handleMint}>Get License</button>
