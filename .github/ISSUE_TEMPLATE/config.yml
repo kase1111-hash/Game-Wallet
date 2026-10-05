@@ -3,9 +3,9 @@ contact_links:
   - name: Documentation
     url: https://github.com/kase1111-hash/Game-Wallet/tree/main/docs
     about: Check our documentation before opening an issue
-  - name: FAQ
-    url: https://github.com/kase1111-hash/Game-Wallet/blob/main/docs/FAQ.md
-    about: Review frequently asked questions
+  - name: Troubleshooting
+    url: https://github.com/kase1111-hash/Game-Wallet/blob/main/docs/quickstart.md#troubleshooting
+    about: Review common issues and solutions
   - name: Security Vulnerabilities
     url: https://github.com/kase1111-hash/Game-Wallet/blob/main/SECURITY.md
     about: Please report security issues privately, not as GitHub issues

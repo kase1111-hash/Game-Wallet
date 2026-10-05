@@ -80,7 +80,9 @@ export class RPCProvider {
 
           // Wait before retry with exponential backoff
           if (attempt < maxAttempts - 1) {
-            logger.warn(`RPC call failed (attempt ${attempt + 1}/${maxAttempts}), retrying`, { error: lastError.message });
+            logger.warn(`RPC call failed (attempt ${attempt + 1}/${maxAttempts}), retrying`, {
+              error: lastError.message,
+            });
             await this.delay(Math.pow(2, attempt) * 1000);
           }
         }
@@ -134,7 +136,10 @@ export class RPCProvider {
         return config.customUrl;
 
       default:
-        throw this.createError('CONFIGURATION_ERROR', `Unknown provider: ${config.provider}`);
+        throw this.createError(
+          'CONFIGURATION_ERROR',
+          `Unknown provider: ${String(config.provider)}`
+        );
     }
   }
 

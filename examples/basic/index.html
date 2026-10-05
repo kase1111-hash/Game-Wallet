@@ -21,8 +21,10 @@
   <div class="label" style="margin-top: 20px;">Status</div>
   <div id="status">Click "Verify & Play" to start.</div>
 
-  <!-- Load your built SDK — adjust the path if needed -->
-  <script src="../../dist/index.js"></script>
-  <script src="app.js"></script>
+  <!-- The SDK's ESM build imports "ethers"; map it to a browser ES module build -->
+  <script type="importmap">
+    { "imports": { "ethers": "https://cdn.jsdelivr.net/npm/ethers@6.16.0/dist/ethers.min.js" } }
+  </script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

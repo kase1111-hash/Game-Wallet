@@ -209,7 +209,10 @@ export class WalletConnector {
         error: null,
       });
 
-      logger.debug(`Connected to ${provider}`, { address: connection.address, chainId: connection.chainId });
+      logger.debug(`Connected to ${provider}`, {
+        address: connection.address,
+        chainId: connection.chainId,
+      });
       return connection;
     } catch (error) {
       const walletError = this.handleConnectionError(error, provider);
@@ -228,7 +231,7 @@ export class WalletConnector {
   /**
    * Disconnect the wallet
    */
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
     this.removeEventListeners();
     this.browserProvider = null;
 
@@ -238,6 +241,8 @@ export class WalletConnector {
       isConnecting: false,
       error: null,
     });
+
+    return Promise.resolve();
   }
 
   /**
@@ -334,10 +339,10 @@ export class WalletConnector {
    * Set up wallet event listeners
    */
   private setupEventListeners(provider: EthereumProvider): void {
-    const handleAccountsChanged = (accounts: unknown) => {
+    const handleAccountsChanged = (accounts: unknown): void => {
       const accountList = accounts as string[];
       if (accountList.length === 0) {
-        this.disconnect();
+        void this.disconnect();
       } else if (this.session.connection) {
         this.updateSession({
           connection: {
@@ -348,7 +353,7 @@ export class WalletConnector {
       }
     };
 
-    const handleChainChanged = (chainId: unknown) => {
+    const handleChainChanged = (chainId: unknown): void => {
       const newChainId = parseInt(chainId as string, 16);
       if (this.session.connection) {
         this.updateSession({
@@ -364,8 +369,8 @@ export class WalletConnector {
       }
     };
 
-    const handleDisconnect = () => {
-      this.disconnect();
+    const handleDisconnect = (): void => {
+      void this.disconnect();
     };
 
     provider.on('accountsChanged', handleAccountsChanged);

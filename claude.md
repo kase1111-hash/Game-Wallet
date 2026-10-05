@@ -15,7 +15,7 @@ npm run build        # Build to dist/ (CJS + ESM)
 npm run dev          # Build with watch mode
 
 # Testing
-npm test             # Run all tests (212 tests)
+npm test             # Run all tests
 npm run test:watch   # Watch mode
 npm run test:coverage # Coverage report
 
@@ -24,10 +24,7 @@ npm run lint         # Run ESLint
 npm run lint:fix     # Auto-fix lint issues
 npm run format       # Format with Prettier
 npm run typecheck    # TypeScript type checking
-
-# Convenience (Makefile)
-make validate        # Full CI: lint, typecheck, test, build
-make pre-commit      # Pre-commit checks
+npm run format:check # Prettier check (run by CI alongside lint)
 ```
 
 ## Architecture
@@ -45,7 +42,7 @@ src/
 │   └── RPCProvider.ts
 ├── types/               # TypeScript type definitions
 │   └── index.ts
-└── utils/               # Utilities (Cache, Logger, Metrics, ErrorReporter)
+└── utils/               # Utilities (Cache, Logger, helpers)
 ```
 
 **State Flow**: `uninitialized → initializing → awaiting_wallet → connecting_wallet → verifying_license → license_valid/no_license → minting_portal_open → minting_in_progress`

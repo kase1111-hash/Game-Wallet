@@ -21,14 +21,6 @@ export { LicenseVerifier } from './license';
 export { MintingPortal } from './minting';
 
 // Export utilities
-export {
-  Cache,
-  Logger,
-  LogLevel,
-  logger,
-} from './utils';
+export { Cache, Logger, LogLevel, logger } from './utils';
 
-export type {
-  LoggerConfig,
-  LogEntry,
-} from './utils';
+export type { LoggerConfig, LogEntry } from './utils';

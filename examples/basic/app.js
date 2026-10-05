@@ -1,8 +1,11 @@
 // GLWM SDK — Basic Example
 // Prerequisites: MetaMask installed, npm run build completed
 
+import { GLWM } from '../../dist/index.mjs';
+
 const CONTRACT = '0x0000000000000000000000000000000000000000'; // Replace with your contract
 const CHAIN_ID = 11155111; // Sepolia testnet
+const RPC_URL = 'https://ethereum-sepolia-rpc.publicnode.com'; // Any Sepolia JSON-RPC endpoint
 
 const statusEl = document.getElementById('status');
 const btn = document.getElementById('verify-btn');
@@ -18,7 +21,7 @@ const glwm = new GLWM({
   chainId: CHAIN_ID,
   rpcProvider: {
     provider: 'custom',
-    customUrl: 'https://rpc.sepolia.org',
+    customUrl: RPC_URL,
   },
   mintingPortal: {
     url: 'https://mint.example.com',
