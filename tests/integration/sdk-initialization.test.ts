@@ -52,10 +52,11 @@ describe('SDK Initialization Integration', () => {
 
       await glwm.initialize();
 
+      // Network.from() is real ethers, so this checks the actual chain and static-network setup
       expect(JsonRpcProvider).toHaveBeenCalledWith(
         'https://polygon-rpc.com',
-        expect.anything(),
-        expect.anything()
+        expect.objectContaining({ chainId: 137n }),
+        { staticNetwork: expect.objectContaining({ chainId: 137n }) }
       );
       expect(states).toEqual(['initializing', 'awaiting_wallet']);
 
