@@ -248,23 +248,34 @@ export class LicenseVerifier {
    * `details`), else as RPC_ERROR (see toRpcError()).
    */
   private async callContract<T>(name: string, ...args: unknown[]): Promise<T> {
+    // The "paused" reverts of every attempt: RPCProvider.call() throws only the last attempt's
+    // error, which can be a fallback failing another way (e.g. a timeout)
+    const pausedReverts: unknown[] = [];
     try {
       // Each attempt reads through the provider RPCProvider.call() hands it, so a failing
       // primary RPC falls back to rpcProvider.fallbackUrls
-      return await this.rpcProvider.call(
-        async (provider) => (await this.contractOn(provider).getFunction(name)(...args)) as T
-      );
+      return await this.rpcProvider.call(async (provider) => {
+        try {
+          return (await this.contractOn(provider).getFunction(name)(...args)) as T;
+        } catch (error) {
+          if (getErrorMessage(error).includes('paused')) {
+            pausedReverts.push(error);
+          }
+          throw error;
+        }
+      });
     } catch (error) {
-      const message = getErrorMessage(error);
-      if (message.includes('paused')) {
+      const finalIsPaused = getErrorMessage(error).includes('paused');
+      if (finalIsPaused || pausedReverts.length > 0) {
+        const revert = finalIsPaused ? error : pausedReverts[pausedReverts.length - 1];
         logger.warn('License contract is paused', { call: name });
         throw {
           code: 'CONTRACT_ERROR',
-          message: `License contract is paused: ${message}`,
+          message: `License contract is paused: ${getErrorMessage(revert)}`,
           // The same JSON-safe summary of the underlying error as an RPC_ERROR's details
-          details: isGLWMError(error)
-            ? (error.details ?? summarizeError(error))
-            : summarizeError(error),
+          details: isGLWMError(revert)
+            ? (revert.details ?? summarizeError(revert))
+            : summarizeError(revert),
           recoverable: true,
           suggestedAction: 'Try again once the license contract is unpaused.',
         } satisfies GLWMError;

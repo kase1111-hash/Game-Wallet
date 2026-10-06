@@ -47,8 +47,9 @@ try {
   }
 } catch (error) {
   // The license could not be verified (e.g. RPC_ERROR, or CONTRACT_ERROR if the contract is
-  // paused). This is not a "no license" answer: let the user retry. The SDK is now in the
-  // 'error' state, so a retry calls glwm.initialize() first, then glwm.verifyAndPlay() again.
+  // paused). This is not a "no license" answer: let the user retry. Such a failure leaves the
+  // SDK in the 'error' state: if glwm.getState().status === 'error', a retry calls
+  // glwm.initialize() first, then glwm.verifyAndPlay() again.
   console.error('Could not verify the license:', error);
 }
 ```
@@ -117,7 +118,7 @@ function App() {
       }
     } catch (error) {
       // The license could not be verified (e.g. RPC_ERROR): show a retry option, not a mint.
-      // Retrying means calling glwm.initialize() again before glwm.verifyAndPlay().
+      // If glwm.getState().status === 'error', the retry calls glwm.initialize() first.
       console.error(error);
     }
   };

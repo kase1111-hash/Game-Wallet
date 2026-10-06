@@ -145,25 +145,27 @@ describe('LicenseVerifier', () => {
   });
 
   describe('fallback providers', () => {
-    it('reads the license contract through the fallback when the primary RPC fails', async () => {
-      const primary = { url: 'https://primary.example' };
-      const fallback = { url: 'https://fallback.example' };
-      const working = new MockLicenseContract();
-      working.setBalance(WALLET_ADDRESS, 1n);
-      working.setTokenIds(WALLET_ADDRESS, [42n]);
-      working.setOwner('42', WALLET_ADDRESS);
-      working.setTokenURI('42', 'https://metadata.example.com/42');
-      const broken = {
+    const primary = { url: 'https://primary.example' };
+    const fallback = { url: 'https://fallback.example' };
+
+    /** A contract whose every read fails with `error` */
+    function failingContract(error: Error): object {
+      return {
         getFunction: () => async () => {
-          throw new Error('primary RPC down');
+          throw error;
         },
       };
+    }
+
+    /** A verifier on an RPC provider with one fallback, reading `onPrimary` / `onFallback` */
+    function verifierWithFallback(onPrimary: object, onFallback: object): LicenseVerifier {
       // A Contract reads through the provider (runner) it is bound to
       const { Contract } = jest.requireMock('ethers') as { Contract: jest.Mock };
       Contract.mockImplementation((_address: string, _abi: unknown, runner: unknown) =>
-        runner === fallback ? working : broken
+        runner === fallback ? onFallback : onPrimary
       );
-      // RPCProvider.call() tries the primary, then each fallback, handing each to the operation
+      // Like RPCProvider.call(): try the primary, then the fallback, handing each to the
+      // operation; if both fail, throw RPC_ERROR built from the last error only
       const rpc = {
         getProvider: () => primary,
         getBlockNumber: async () => 12345678,
@@ -171,16 +173,53 @@ describe('LicenseVerifier', () => {
           try {
             return await fn(primary);
           } catch {
-            return fn(fallback);
+            try {
+              return await fn(fallback);
+            } catch (error) {
+              throw {
+                code: 'RPC_ERROR',
+                message: `RPC call failed after 1 attempts: ${(error as Error).message}`,
+              };
+            }
           }
         },
       };
       const withFallback = new LicenseVerifier(rpc as never, CONTRACT_ADDRESS);
       withFallback.initialize();
+      return withFallback;
+    }
+
+    it('reads the license contract through the fallback when the primary RPC fails', async () => {
+      const working = new MockLicenseContract();
+      working.setBalance(WALLET_ADDRESS, 1n);
+      working.setTokenIds(WALLET_ADDRESS, [42n]);
+      working.setOwner('42', WALLET_ADDRESS);
+      working.setTokenURI('42', 'https://metadata.example.com/42');
+      const withFallback = verifierWithFallback(
+        failingContract(new Error('primary RPC down')),
+        working
+      );
 
       const result = await withFallback.verifyLicense(WALLET_ADDRESS);
 
       expect(result).toMatchObject({ isValid: true, license: { tokenId: '42' } });
+    });
+
+    it('still reports a paused contract when the fallback then fails another way', async () => {
+      const revert = new Error('execution reverted: "Pausable: paused"');
+      const withFallback = verifierWithFallback(
+        failingContract(revert),
+        failingContract(new Error('request timeout'))
+      );
+
+      const thrown = await rejectionOf(withFallback.verifyLicense(WALLET_ADDRESS));
+
+      expect(thrown).toMatchObject({
+        code: 'CONTRACT_ERROR',
+        message: `License contract is paused: ${revert.message}`,
+        details: { name: 'Error', message: revert.message },
+        recoverable: true,
+      });
     });
   });
 

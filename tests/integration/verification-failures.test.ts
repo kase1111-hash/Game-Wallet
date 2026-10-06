@@ -659,8 +659,9 @@ describe('verification failures are errors, not license verdicts', () => {
 
   // initialize() starts a new session (the wallet is disconnected, the state is
   // 'awaiting_wallet'). A verification of the previous session that settles afterwards, or while
-  // initialize() is still running, must not move the new session to 'error' (which only another
-  // initialize() leaves), nor cache or announce its answer there.
+  // initialize() is still running, must not move the new session to 'error' (where verifying,
+  // connecting and minting are rejected until initialize() is called again), nor cache or
+  // announce its answer there.
   describe('a verification still in flight when initialize() runs', () => {
     interface Held<T> {
       /** Resolves once the call is made */
@@ -708,7 +709,6 @@ describe('verification failures are errors, not license verdicts', () => {
       expectReportedOnce(thrown, 'RPC_ERROR');
       expect(probe.statuses).toEqual([]);
       expect(sdk.getState().status).toBe('awaiting_wallet');
-      expect(cachedVerification()).toBeNull();
       // The new session works without another initialize()
       await sdk.connectWallet('metamask');
       await expect(sdk.verifyLicense()).resolves.toMatchObject({ isValid: true });
@@ -782,6 +782,24 @@ describe('verification failures are errors, not license verdicts', () => {
       expect(probe.portalOpens).toBe(0);
       expect(portalOverlay()).toBeNull();
       expect(probe.statuses).toEqual([]);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('verifyAndPlay(): the check after the portal closes settles after initialize() -> returned only', async () => {
+      const probe = await connected();
+      const { flow } = await verifyAndPlayUntilPortalOpen();
+      const recheck = hold<bigint>('balanceOf');
+      sdk.closeMintingPortal(); // e.g. the user minted, then closed the portal
+      await recheck.reached;
+      await sdk.initialize();
+      probe.statuses.length = 0;
+
+      recheck.resolve(1n);
+
+      await expect(flow).resolves.toMatchObject({ isValid: true });
+      expect(probe.statuses).toEqual([]);
+      expect(sdk.getState().status).toBe('awaiting_wallet');
+      expect(cachedVerification()).toBeNull();
       expect(onError).not.toHaveBeenCalled();
     });
   });

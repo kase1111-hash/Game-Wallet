@@ -187,9 +187,10 @@ is:
 
 The error reaches `onError` and the `ERROR` event exactly once, and is the error the call rejects
 with. It is never cached and never moves the state to `no_license`. `verifyLicense()` and
-`verifyAndPlay()` move to the `error` state, which other methods reject until `initialize()` is
-called again: to retry, call `initialize()`, then `verifyAndPlay()` (it reconnects the wallet). The
-read-only `checkLicenseForAddress()`, `getLicenseDetails()` and `getAllLicenses()` leave the state
+`verifyAndPlay()` move to the `error` state, in which `verifyAndPlay()`, `connectWallet()`,
+`switchChain()`, `openMintingPortal()` and the license methods reject with `CONFIGURATION_ERROR`: to
+retry, call `initialize()`, then `verifyAndPlay()` (it reconnects the wallet). The read-only
+`checkLicenseForAddress()`, `getLicenseDetails()` and `getAllLicenses()` leave the state
 unchanged. A token's metadata that cannot be fetched is not a failure: default metadata is used.
 
 A verification still running when `initialize()` or `dispose()` is called settles for its caller
