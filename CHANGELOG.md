@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/quickstart.md` rewritten with accurate API and troubleshooting
 - `docs/api.md` rewritten with accurate types matching actual source code
 
+### Fixed
+- The SDK no longer stays in `minting_portal_open` / `minting_in_progress` after the minting
+  portal fails to open or closes on its own (close button, overlay click, `PORTAL_CLOSED`,
+  auto-close after a mint, the `verifyAndPlay()` timeout), which made every later
+  `verifyAndPlay()` throw "Minting is already in progress". A minting state is now reported only
+  while the portal is open: `minting_portal_open` and `OPEN_MINTING_PORTAL` come after the portal
+  opens (not before, and not at all if it fails to open), and every close leaves the minting state
+  the way `closeMintingPortal()` always did, before `mintingPortal.onClose` runs
+- `openMintingPortal()` while the portal is already open (or still opening, e.g. a double-click)
+  no longer resets `minting_in_progress`, emits a second `OPEN_MINTING_PORTAL`, or stacks a second
+  portal overlay; `closeMintingPortal()` with no portal open no longer changes the state
+
 ### Removed
 - Unused utilities: `Metrics.ts`, `ErrorReporter.ts`, `Config.ts` and their tests
 - Stub methods: `getMintConfig()`, `mint()`, `fetchMintConfig()`, `executeMint()`

@@ -154,7 +154,9 @@ describe('MintingPortal', () => {
       const portal = createPortal({}, { onClose });
       await portal.open();
 
-      const closeButton = document.querySelector('#glwm-portal-overlay button') as HTMLButtonElement;
+      const closeButton = document.querySelector(
+        '#glwm-portal-overlay button'
+      ) as HTMLButtonElement;
       expect(closeButton).not.toBeNull();
       expect(closeButton.textContent).toBe('×');
 
@@ -228,9 +230,7 @@ describe('MintingPortal', () => {
       });
       window.dispatchEvent(event);
 
-      expect(onMintCompleted).toHaveBeenCalledWith(
-        expect.objectContaining({ success: true })
-      );
+      expect(onMintCompleted).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
       expect(portal.isPortalOpen()).toBe(false);
       expect(onClose).toHaveBeenCalled();
     });
@@ -355,6 +355,40 @@ describe('MintingPortal', () => {
       expect(portal.isPortalOpen()).toBe(true); // Still open!
 
       portal.close();
+    });
+  });
+
+  describe('lifecycle callbacks', () => {
+    it('should call the constructor onClose before config.onClose, with the portal closed', async () => {
+      const calls: string[] = [];
+      const portal = createPortal(
+        { onClose: () => calls.push(`config.onClose open=${portal.isPortalOpen()}`) },
+        { onClose: () => calls.push(`onClose open=${portal.isPortalOpen()}`) }
+      );
+      await portal.open();
+
+      portal.close();
+
+      expect(calls).toEqual(['onClose open=false', 'config.onClose open=false']);
+    });
+
+    it('should still call config.onClose when the constructor onClose throws', async () => {
+      const onCloseConfig = jest.fn();
+      const portal = createPortal(
+        { onClose: onCloseConfig },
+        {
+          onClose: () => {
+            throw new Error('owner callback failed');
+          },
+        }
+      );
+      await portal.open();
+
+      expect(() => portal.close()).toThrow('owner callback failed');
+
+      expect(onCloseConfig).toHaveBeenCalledTimes(1);
+      expect(portal.isPortalOpen()).toBe(false);
+      expect(document.getElementById('glwm-portal-overlay')).toBeNull();
     });
   });
 

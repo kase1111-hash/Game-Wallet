@@ -86,6 +86,10 @@ export class MintingPortal {
   private onMintCompleted?: (result: MintResult) => void;
   private onClose?: () => void;
 
+  /**
+   * @param callbacks - Lifecycle callbacks for the portal's owner. `onClose` fires for every
+   *   close path, before `config.onClose`.
+   */
   constructor(
     config: MintingPortalConfig,
     callbacks?: {
@@ -157,8 +161,13 @@ export class MintingPortal {
 
     this.isOpen = false;
     logger.debug('Portal closed');
-    this.config.onClose?.();
-    this.onClose?.();
+    // The owner's callback runs first so that its state already reflects the closed portal when
+    // the app's config.onClose runs; config.onClose still runs if the owner's callback throws
+    try {
+      this.onClose?.();
+    } finally {
+      this.config.onClose?.();
+    }
   }
 
   /**

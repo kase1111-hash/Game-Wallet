@@ -23,6 +23,15 @@ const logger = Logger.getInstance().child('GLWM');
 type StateListener = (state: GLWMState) => void;
 type EventHandler<T extends GLWMEvent['type']> = (payload: Extract<GLWMEvent, { type: T }>) => void;
 
+/** The states that exist only while the minting portal is open (see syncMintingState()) */
+type MintingState = Extract<GLWMState, { status: 'minting_portal_open' | 'minting_in_progress' }>;
+/** Every other state: the only ones setState() accepts */
+type NonMintingState = Exclude<GLWMState, MintingState>;
+
+function isMintingState(state: GLWMState): state is MintingState {
+  return state.status === 'minting_portal_open' || state.status === 'minting_in_progress';
+}
+
 const DEFAULT_CACHE_CONFIG: CacheConfig = {
   enabled: true,
   ttlSeconds: 300, // 5 minutes
@@ -60,6 +69,9 @@ export class GLWM {
 
   // Errors already reported (ERROR event + config.onError), so each is reported exactly once
   private readonly reportedErrors = new WeakSet<GLWMError>();
+
+  // An openMintingPortal() still in progress, shared by concurrent calls (e.g. a double-click)
+  private portalOpening: Promise<void> | null = null;
 
   private static readonly VERSION = '0.1.0';
 
@@ -117,10 +129,11 @@ export class GLWM {
       this.licenseVerifier = new LicenseVerifier(this.rpcProvider, this.config.licenseContract);
       this.licenseVerifier.initialize();
 
-      // Initialize minting portal
+      // Initialize minting portal. Its lifecycle callbacks drive the minting states, through
+      // syncMintingState() only.
       this.mintingPortal = new MintingPortal(this.config.mintingPortal, {
-        onMintStarted: (txHash) => {
-          this.setState({ status: 'minting_in_progress', transactionHash: txHash });
+        onMintStarted: (txHash): void => {
+          this.syncMintingState({ status: 'minting_in_progress', transactionHash: txHash });
           this.emitEvent({ type: 'MINT_STARTED', transactionHash: txHash });
         },
         onMintCompleted: (result) => {
@@ -132,8 +145,14 @@ export class GLWM {
             }
           }
         },
-        onClose: () => {
-          this.emitEvent({ type: 'CLOSE_MINTING_PORTAL' });
+        onClose: (): void => {
+          // CLOSE_MINTING_PORTAL ends verifyAndPlay()'s wait, so it fires even if a state
+          // listener throws
+          try {
+            this.syncMintingState();
+          } finally {
+            this.emitEvent({ type: 'CLOSE_MINTING_PORTAL' });
+          }
         },
       });
 
@@ -179,11 +198,9 @@ export class GLWM {
   async verifyAndPlay(): Promise<LicenseVerificationResult> {
     this.ensureInitialized();
 
-    // Check if minting is already in progress
-    if (
-      this.state.status === 'minting_portal_open' ||
-      this.state.status === 'minting_in_progress'
-    ) {
+    // Check if minting is already in progress (a minting state implies the portal is open; see
+    // syncMintingState())
+    if (isMintingState(this.state)) {
       throw this.createError(
         'USER_CANCELLED',
         'Minting is already in progress. Please complete or close the current minting session.',
@@ -432,28 +449,47 @@ export class GLWM {
 
   /**
    * Open the minting portal
+   *
+   * Once the portal is open, the state becomes 'minting_portal_open' and OPEN_MINTING_PORTAL is
+   * emitted. If the portal cannot open, the state is left unchanged and the error is reported and
+   * thrown. Does nothing if the portal is already open.
    */
   async openMintingPortal(): Promise<void> {
     this.ensureInitialized();
 
-    this.setState({ status: 'minting_portal_open' });
-    this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
+    // A second call while the first is still opening waits for it: MintingPortal.open() is not
+    // re-entrant, and two concurrent opens would stack a second, orphaned overlay
+    this.portalOpening ??= this.openPortalOnce().finally(() => {
+      this.portalOpening = null;
+    });
+    return this.portalOpening;
+  }
 
-    await this.withErrorReporting(() => this.mintingPortal!.open());
+  private async openPortalOnce(): Promise<void> {
+    const portal = this.mintingPortal!;
+    if (portal.isPortalOpen()) {
+      return;
+    }
+
+    await this.withErrorReporting(() => portal.open());
+
+    // Announced outside the error reporting: an exception from an app's state listener or
+    // OPEN_MINTING_PORTAL handler is not a failure to open the portal
+    if (portal.isPortalOpen()) {
+      this.syncMintingState();
+      this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
+    }
   }
 
   /**
    * Close the minting portal
+   *
+   * As with every other way the portal closes, the SDK then leaves the minting state: to
+   * 'no_license' if a wallet is connected, else 'awaiting_wallet'. Does nothing if the portal is
+   * not open.
    */
   closeMintingPortal(): void {
     this.mintingPortal?.close();
-
-    const session = this.getWalletSession();
-    if (session.connection) {
-      this.setState({ status: 'no_license', address: session.connection.address });
-    } else {
-      this.setState({ status: 'awaiting_wallet' });
-    }
   }
 
   // ============================================
@@ -564,11 +600,64 @@ export class GLWM {
     }
   }
 
-  private setState(newState: GLWMState): void {
+  /**
+   * Set a state that is not a minting state. Minting states are entered and left only by
+   * syncMintingState(), so they are not accepted here.
+   */
+  private setState(newState: NonMintingState): void {
+    this.commitState(newState);
+  }
+
+  /**
+   * Store the state and notify listeners. Called only by setState() and syncMintingState().
+   */
+  private commitState(newState: GLWMState): void {
     logger.debug(`State: ${this.state.status} → ${newState.status}`);
     this.state = newState;
     for (const listener of this.stateListeners) {
       listener(this.state);
+    }
+  }
+
+  /**
+   * Minting-state invariant: the SDK is in a minting state ('minting_portal_open' or
+   * 'minting_in_progress') only while the minting portal is open, and the portal opening puts
+   * it in one.
+   *
+   * This is the only place a minting state is entered or left (setState() does not accept
+   * them). It runs once the portal has opened (openMintingPortal()) and from the portal's
+   * onMintStarted / onClose callbacks, and reads the portal's actual open status. Every close
+   * path goes through MintingPortal.close() and so through onClose: the close button, an overlay
+   * click, PORTAL_CLOSED, auto-close after MINT_COMPLETED, the verifyAndPlay() timeout,
+   * closeMintingPortal(), dispose() and initialize(). A portal that fails to open is never
+   * announced, so the state is left as it was.
+   *
+   * It changes the state only when the state and the portal disagree, or when `next` moves an
+   * open portal's session forward, so no transition is notified twice.
+   *
+   * Public calls made while the portal is open (verifyLicense(), connectWallet(),
+   * disconnectWallet()) can still move the state off a minting state; verifyAndPlay() covers
+   * that case by checking isPortalOpen().
+   *
+   * @param next - The minting state to enter while the portal is open. Without it, an open
+   *   portal enters 'minting_portal_open' unless already in a minting state.
+   */
+  private syncMintingState(next?: MintingState): void {
+    const portalOpen = this.mintingPortal?.isPortalOpen() === true;
+
+    if (portalOpen) {
+      if (next) {
+        this.commitState(next);
+      } else if (!isMintingState(this.state)) {
+        this.commitState({ status: 'minting_portal_open' });
+      }
+    } else if (isMintingState(this.state)) {
+      const connection = this.getWalletSession().connection;
+      this.setState(
+        connection
+          ? { status: 'no_license', address: connection.address }
+          : { status: 'awaiting_wallet' }
+      );
     }
   }
 
@@ -701,6 +790,7 @@ export class GLWM {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         unsubscribe();
+        // Closing the portal also leaves the minting state (see syncMintingState())
         this.mintingPortal?.close();
         reject(this.createError('USER_CANCELLED', 'Minting portal timed out after 10 minutes'));
       }, GLWM.PORTAL_TIMEOUT_MS);
