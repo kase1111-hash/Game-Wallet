@@ -153,6 +153,9 @@ describe('minting state invariant', () => {
     });
     sdk.on('OPEN_MINTING_PORTAL', () => {
       probe.openEvents++;
+      if (!portalIsOpen()) {
+        probe.violations.push('OPEN_MINTING_PORTAL while the portal is not open');
+      }
     });
     sdk.on('CLOSE_MINTING_PORTAL', () => {
       probe.closeEvents++;
@@ -572,8 +575,16 @@ describe('minting state invariant', () => {
     it('two concurrent openMintingPortal() calls (double-click) open one portal', async () => {
       const probe = await connectedWithoutLicense();
 
-      await Promise.all([sdk.openMintingPortal(), sdk.openMintingPortal()]);
+      let statusWhenSecondResolved: Status | undefined;
+      await Promise.all([
+        sdk.openMintingPortal(),
+        sdk.openMintingPortal().then(() => {
+          statusWhenSecondResolved = sdk.getState().status;
+        }),
+      ]);
 
+      // The second call waited for the shared open rather than resolving early
+      expect(statusWhenSecondResolved).toBe('minting_portal_open');
       expect(document.querySelectorAll('#glwm-portal-overlay')).toHaveLength(1);
       expect(probe.openEvents).toBe(1);
       expect(probe.statuses.filter((s) => s === 'minting_portal_open')).toHaveLength(1);
@@ -586,6 +597,66 @@ describe('minting state invariant', () => {
       expect(sdk.getState()).toEqual(NO_LICENSE);
       licenseMinted();
       await expect(sdk.verifyAndPlay()).resolves.toMatchObject({ isValid: true });
+      expect(probe.violations).toEqual([]);
+    });
+
+    it('two concurrent openMintingPortal() calls that fail share one reported error', async () => {
+      const onError = jest.fn();
+      const probe = await connectedWithoutLicense({
+        onError,
+        mintingPortal: { url: PORTAL_URL, mode: 'unsupported' as never },
+      });
+
+      const [first, second] = await Promise.all([
+        sdk.openMintingPortal().catch((e: unknown) => e),
+        sdk.openMintingPortal().catch((e: unknown) => e),
+      ]);
+
+      expect(first).toMatchObject({ code: 'CONFIGURATION_ERROR' });
+      expect(second).toBe(first);
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(probe.openEvents).toBe(0);
+      expect(probe.violations).toEqual([]);
+    });
+
+    it('a state listener that closes the portal on minting_portal_open: no OPEN after CLOSE', async () => {
+      const probe = await connectedWithoutLicense();
+      const events: string[] = [];
+      sdk.on('OPEN_MINTING_PORTAL', () => events.push('OPEN'));
+      sdk.on('CLOSE_MINTING_PORTAL', () => events.push('CLOSE'));
+      sdk.subscribe((state) => {
+        if (state.status === 'minting_portal_open') {
+          sdk.closeMintingPortal();
+        }
+      });
+
+      await sdk.openMintingPortal();
+
+      expect(events).toEqual(['CLOSE']);
+      expect(portalIsOpen()).toBe(false);
+      expect(sdk.getState()).toEqual(NO_LICENSE);
+      expect(probe.violations).toEqual([]);
+    });
+
+    it('the 10-minute timeout still rejects when a state listener throws during the close', async () => {
+      jest.useFakeTimers();
+      const onError = jest.fn();
+      const probe = await connectedWithoutLicense({ onError });
+      const { flow } = await verifyAndPlayUntilPortalOpen();
+      sdk.subscribe((state) => {
+        if (state.status === 'no_license') {
+          throw new Error('bug in an app listener');
+        }
+      });
+
+      await jest.advanceTimersByTimeAsync(PORTAL_TIMEOUT_MS);
+
+      expect(await flow).toMatchObject({
+        code: 'USER_CANCELLED',
+        message: expect.stringContaining('timed out'),
+      });
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(portalIsOpen()).toBe(false);
       expect(probe.violations).toEqual([]);
     });
 

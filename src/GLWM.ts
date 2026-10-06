@@ -32,6 +32,11 @@ function isMintingState(state: GLWMState): state is MintingState {
   return state.status === 'minting_portal_open' || state.status === 'minting_in_progress';
 }
 
+/** An error's stack (or message) for log output */
+function describeError(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
 const DEFAULT_CACHE_CONFIG: CacheConfig = {
   enabled: true,
   ttlSeconds: 300, // 5 minutes
@@ -95,10 +100,21 @@ export class GLWM {
     this.setState({ status: 'initializing' });
 
     try {
-      // Release components from a previous initialize(), so their wallet listeners and
-      // portal callbacks stop firing into this instance
-      await this.walletConnector?.disconnect();
-      this.mintingPortal?.close();
+      // Release components from a previous initialize(), so their wallet listeners and portal
+      // callbacks stop firing into this instance. They are detached first, and a failure while
+      // releasing them (e.g. an app handler throwing on WALLET_DISCONNECTED) is logged rather
+      // than failing this initialize().
+      const previousConnector = this.walletConnector;
+      const previousPortal = this.mintingPortal;
+      this.walletConnector = null;
+      this.mintingPortal = null;
+      await this.releaseQuietly('wallet connector', async () => {
+        // Listeners are attached only together with a connection
+        if (previousConnector?.getSession().connection) {
+          await previousConnector.disconnect();
+        }
+      });
+      await this.releaseQuietly('minting portal', () => previousPortal?.close());
 
       // Initialize cache
       this.cache = new Cache(this.config.cacheConfig ?? DEFAULT_CACHE_CONFIG);
@@ -261,15 +277,16 @@ export class GLWM {
     const provider = preferredProvider ?? 'metamask';
     this.setState({ status: 'connecting_wallet', provider });
 
+    const connector = this.walletConnector!;
+    let connection: WalletConnection;
     try {
-      const connection = await this.walletConnector!.connect(preferredProvider);
-
-      // Set wallet address in minting portal
-      this.mintingPortal?.setWalletAddress(connection.address);
-
-      return connection;
+      connection = await connector.connect(preferredProvider);
     } catch (error) {
       const glwmError = this.handleError(error);
+      if (connector !== this.walletConnector) {
+        // initialize() ran meanwhile: its state is not this connection attempt's to change
+        throw this.reportError(glwmError);
+      }
       try {
         this.setState({ status: 'error', error: glwmError });
       } finally {
@@ -277,6 +294,21 @@ export class GLWM {
       }
       throw glwmError;
     }
+
+    if (connector !== this.walletConnector) {
+      // initialize() replaced the connector while connecting: release this connection rather
+      // than leave its wallet listeners attached
+      await connector.disconnect();
+      throw this.createError(
+        'WALLET_DISCONNECTED',
+        'initialize() was called while the wallet was connecting. Connect again.'
+      );
+    }
+
+    // Set wallet address in minting portal
+    this.mintingPortal?.setWalletAddress(connection.address);
+
+    return connection;
   }
 
   /**
@@ -466,18 +498,33 @@ export class GLWM {
   }
 
   private async openPortalOnce(): Promise<void> {
-    const portal = this.mintingPortal!;
+    const portal = this.mintingPortal;
+    if (!portal) {
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        'SDK not initialized. Call initialize() first.'
+      );
+    }
     if (portal.isPortalOpen()) {
       return;
     }
 
     await this.withErrorReporting(() => portal.open());
 
+    if (portal !== this.mintingPortal) {
+      // initialize() or dispose() replaced the portal while it was opening: don't leave it on screen
+      portal.close();
+      return;
+    }
+
     // Announced outside the error reporting: an exception from an app's state listener or
     // OPEN_MINTING_PORTAL handler is not a failure to open the portal
     if (portal.isPortalOpen()) {
       this.syncMintingState();
-      this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
+      // A state listener may already have closed the portal again
+      if (portal.isPortalOpen()) {
+        this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
+      }
     }
   }
 
@@ -591,6 +638,13 @@ export class GLWM {
         'SDK not initialized. Call initialize() first.'
       );
     }
+    if (this.state.status === 'initializing') {
+      // The components are being (re)created: using them now would act on a half-built SDK
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        'SDK is still initializing. Wait for initialize() to finish.'
+      );
+    }
     if (this.state.status === 'error') {
       const errorState = this.state as { status: 'error'; error: GLWMError };
       throw this.createError(
@@ -700,12 +754,16 @@ export class GLWM {
     try {
       listener();
     } catch (listenerError) {
-      logger.error(`${name} threw`, {
-        error:
-          listenerError instanceof Error
-            ? (listenerError.stack ?? listenerError.message)
-            : String(listenerError),
-      });
+      logger.error(`${name} threw`, { error: describeError(listenerError) });
+    }
+  }
+
+  /** Release a component from a previous initialize(), logging instead of throwing */
+  private async releaseQuietly(name: string, release: () => void | Promise<void>): Promise<void> {
+    try {
+      await release();
+    } catch (releaseError) {
+      logger.error(`Releasing the previous ${name} threw`, { error: describeError(releaseError) });
     }
   }
 
@@ -790,8 +848,16 @@ export class GLWM {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         unsubscribe();
-        // Closing the portal also leaves the minting state (see syncMintingState())
-        this.mintingPortal?.close();
+        try {
+          // Closing the portal also leaves the minting state (see syncMintingState())
+          this.mintingPortal?.close();
+        } catch (closeError) {
+          // An app listener threw during the close: still reject below, or the caller would
+          // wait forever (this wait no longer listens for CLOSE_MINTING_PORTAL)
+          logger.error('Closing the timed-out minting portal threw', {
+            error: describeError(closeError),
+          });
+        }
         reject(this.createError('USER_CANCELLED', 'Minting portal timed out after 10 minutes'));
       }, GLWM.PORTAL_TIMEOUT_MS);
 
