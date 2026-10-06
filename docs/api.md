@@ -176,21 +176,26 @@ A result is always a verdict about the license:
 #### Verification failures
 
 A verification that cannot complete says nothing about the license, so it is not a result. It is
-thrown as a `GLWMError`. Its `details` is a JSON-safe summary of the underlying error (`message`,
-`name`, and the ethers `code`, `shortMessage` and `reason` when present), so it can be logged or
-sent to telemetry as is:
+thrown as a `GLWMError`, whose `details` are JSON-safe, so they can be logged or sent to telemetry as
+is:
 
-| Code | When |
-|------|------|
-| `RPC_ERROR` | An RPC call fails after the configured retries and fallbacks: the block number, `balanceOf`, `tokenOfOwnerByIndex`, `tokenURI` (or `ownerOf` in `getLicenseDetails()`). Has a `suggestedAction` |
-| `CONTRACT_ERROR` | A contract read reverts because the license contract is paused. `recoverable: true`, since the contract can be unpaused; the minting portal is not opened, since minting on a paused contract cannot work |
-| `VERIFICATION_FAILED` | The license verifier returned a result that is not a verdict (a deprecated or unknown `reason`). Guards against ever treating such a result as "no license" |
+| Code | When | `details` |
+|------|------|-----------|
+| `RPC_ERROR` | An RPC call fails on the primary RPC endpoint and on each of `rpcProvider.fallbackUrls`, after the configured retries: the block number, `balanceOf`, `tokenOfOwnerByIndex`, `tokenURI` (or `ownerOf` in `getLicenseDetails()`). Has a `suggestedAction` | A summary of the last underlying error: `message`, `name`, and the ethers `code`, `shortMessage` and `reason` when present |
+| `CONTRACT_ERROR` | A contract read reverts because the license contract is paused. `recoverable: true`, since the contract can be unpaused; the minting portal is not opened, since minting on a paused contract cannot work. Has a `suggestedAction` | The same summary of the revert |
+| `VERIFICATION_FAILED` | The license verifier returned a result that is not a verdict (a deprecated or unknown `reason`). Guards against ever treating such a result as "no license" | `{ reason }` (`null` if the result had none) |
 
 The error reaches `onError` and the `ERROR` event exactly once, and is the error the call rejects
 with. It is never cached and never moves the state to `no_license`. `verifyLicense()` and
-`verifyAndPlay()` move to the `error` state (call `initialize()` to retry); the read-only
-`checkLicenseForAddress()`, `getLicenseDetails()` and `getAllLicenses()` leave the state unchanged.
-A token's metadata that cannot be fetched is not a failure: default metadata is used.
+`verifyAndPlay()` move to the `error` state, which other methods reject until `initialize()` is
+called again: to retry, call `initialize()`, then `verifyAndPlay()` (it reconnects the wallet). The
+read-only `checkLicenseForAddress()`, `getLicenseDetails()` and `getAllLicenses()` leave the state
+unchanged. A token's metadata that cannot be fetched is not a failure: default metadata is used.
+
+A verification still running when `initialize()` or `dispose()` is called settles for its caller
+only: its verdict is neither cached nor announced (`onLicenseVerified`, `LICENSE_VERIFIED`), its
+failure is reported but does not move the new session to `error`, and `verifyAndPlay()` does not go
+on to open the minting portal.
 
 ### LicenseNFT
 

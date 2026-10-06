@@ -1,4 +1,5 @@
 import { Contract } from 'ethers';
+import type { JsonRpcProvider } from 'ethers';
 import type { RPCProvider } from '../rpc';
 import type {
   LicenseVerificationResult,
@@ -83,6 +84,8 @@ export class LicenseVerifier {
   private rpcProvider: RPCProvider;
   private contractAddress: string;
   private contract: Contract | null = null;
+  // The license contract bound to each fallback provider RPCProvider.call() tries
+  private contractsByProvider = new WeakMap<JsonRpcProvider, Contract>();
 
   constructor(rpcProvider: RPCProvider, contractAddress: string) {
     this.rpcProvider = rpcProvider;
@@ -115,12 +118,11 @@ export class LicenseVerifier {
       throw this.createError('CONFIGURATION_ERROR', `Invalid Ethereum address: ${address}`);
     }
 
-    const contract = this.contract;
     const blockNumber = await this.getBlockNumber();
     const checkedAt = Date.now();
 
     // Check if the address owns any tokens
-    const balance = await this.callContract<bigint>(contract, 'balanceOf', address);
+    const balance = await this.callContract<bigint>('balanceOf', address);
 
     if (balance === 0n) {
       return {
@@ -133,7 +135,7 @@ export class LicenseVerifier {
     }
 
     // Get the first token owned by the address
-    const tokenId = await this.callContract<bigint>(contract, 'tokenOfOwnerByIndex', address, 0);
+    const tokenId = await this.callContract<bigint>('tokenOfOwnerByIndex', address, 0);
 
     // Fetch license details
     const license = await this.getLicenseById(tokenId.toString(), address);
@@ -170,14 +172,12 @@ export class LicenseVerifier {
       throw this.createError('CONTRACT_ERROR', 'License contract not initialized');
     }
 
-    const contract = this.contract;
-
-    const balance = await this.callContract<bigint>(contract, 'balanceOf', address);
+    const balance = await this.callContract<bigint>('balanceOf', address);
 
     // Fetch all token IDs first
     const tokenIds: bigint[] = [];
     for (let i = 0n; i < balance; i++) {
-      tokenIds.push(await this.callContract<bigint>(contract, 'tokenOfOwnerByIndex', address, i));
+      tokenIds.push(await this.callContract<bigint>('tokenOfOwnerByIndex', address, i));
     }
 
     // Fetch license details in parallel
@@ -198,13 +198,11 @@ export class LicenseVerifier {
       throw this.createError('CONTRACT_ERROR', 'License contract not initialized');
     }
 
-    const contract = this.contract;
-
     // Get owner if not provided
-    const licenseOwner = owner ?? (await this.callContract<string>(contract, 'ownerOf', tokenId));
+    const licenseOwner = owner ?? (await this.callContract<string>('ownerOf', tokenId));
 
     // Get token URI
-    const tokenUri = await this.callContract<string>(contract, 'tokenURI', tokenId);
+    const tokenUri = await this.callContract<string>('tokenURI', tokenId);
 
     // Fetch and parse metadata
     const metadata = await this.fetchMetadata(tokenUri);
@@ -229,17 +227,32 @@ export class LicenseVerifier {
     }
   }
 
+  /** The license contract bound to `provider` (the primary's is the one from initialize()) */
+  private contractOn(provider: JsonRpcProvider): Contract {
+    if (provider === this.rpcProvider.getProvider() && this.contract) {
+      return this.contract;
+    }
+    let contract = this.contractsByProvider.get(provider);
+    if (!contract) {
+      contract = new Contract(this.contractAddress, LICENSE_ABI, provider);
+      this.contractsByProvider.set(provider, contract);
+    }
+    return contract;
+  }
+
   /**
    * Call a view function of the license contract, with the RPC provider's retry and fallback.
    *
    * A failure is thrown, never turned into a verdict about the license: as CONTRACT_ERROR if the
-   * call reverted because the contract is paused (with the failed call as `details`), else as
-   * RPC_ERROR (see toRpcError()).
+   * call reverted because the contract is paused (with a JSON-safe summary of the revert as
+   * `details`), else as RPC_ERROR (see toRpcError()).
    */
-  private async callContract<T>(contract: Contract, name: string, ...args: unknown[]): Promise<T> {
+  private async callContract<T>(name: string, ...args: unknown[]): Promise<T> {
     try {
+      // Each attempt reads through the provider RPCProvider.call() hands it, so a failing
+      // primary RPC falls back to rpcProvider.fallbackUrls
       return await this.rpcProvider.call(
-        async () => (await contract.getFunction(name)(...args)) as T
+        async (provider) => (await this.contractOn(provider).getFunction(name)(...args)) as T
       );
     } catch (error) {
       const message = getErrorMessage(error);
@@ -248,8 +261,10 @@ export class LicenseVerifier {
         throw {
           code: 'CONTRACT_ERROR',
           message: `License contract is paused: ${message}`,
-          // The RPC layer's GLWMError (already JSON-safe), or a summary of anything else
-          details: isGLWMError(error) ? error : summarizeError(error),
+          // The same JSON-safe summary of the underlying error as an RPC_ERROR's details
+          details: isGLWMError(error)
+            ? (error.details ?? summarizeError(error))
+            : summarizeError(error),
           recoverable: true,
           suggestedAction: 'Try again once the license contract is unpaused.',
         } satisfies GLWMError;

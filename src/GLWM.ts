@@ -90,6 +90,10 @@ export class GLWM {
   // An openMintingPortal() still in progress, shared by concurrent calls (e.g. a double-click)
   private portalOpening: Promise<void> | null = null;
 
+  // Bumped by initialize() and dispose(), so that a verification started before them cannot
+  // change the state of (or cache into) the session that follows
+  private sessionId = 0;
+
   private static readonly VERSION = '0.1.0';
 
   constructor(config: GLWMConfig) {
@@ -109,6 +113,7 @@ export class GLWM {
    * Must be called before any other methods
    */
   async initialize(): Promise<void> {
+    this.sessionId++;
     this.setState({ status: 'initializing' });
 
     try {
@@ -200,6 +205,7 @@ export class GLWM {
    * Clean up resources, disconnect wallet, close portals
    */
   async dispose(): Promise<void> {
+    this.sessionId++;
     await this.disconnectWallet();
     this.mintingPortal?.close();
     this.stateListeners.clear();
@@ -248,7 +254,12 @@ export class GLWM {
     }
 
     // Verify license
+    const sessionId = this.sessionId;
     const result = await this.verifyLicense();
+    if (sessionId !== this.sessionId) {
+      // initialize() or dispose() ran meanwhile: don't act on the previous session's answer
+      return result;
+    }
 
     if (result.isValid) {
       if (result.license) {
@@ -271,7 +282,7 @@ export class GLWM {
     // After minting portal closes, verify again
     const postMintResult = await this.verifyLicenseFresh();
 
-    if (postMintResult.isValid && postMintResult.license) {
+    if (postMintResult.isValid && postMintResult.license && sessionId === this.sessionId) {
       this.setState({ status: 'license_valid', license: postMintResult.license });
     }
 
@@ -428,8 +439,15 @@ export class GLWM {
       return cached;
     }
 
+    const sessionId = this.sessionId;
     try {
       const result = await this.requestVerdict(address);
+
+      if (sessionId !== this.sessionId) {
+        // initialize() or dispose() ran meanwhile: this answer belongs to the previous session,
+        // so it must not be cached in, or change the state of, the new one
+        return result;
+      }
 
       // Cache the result
       this.cache?.setVerification(address, result);
@@ -446,6 +464,10 @@ export class GLWM {
       return result;
     } catch (error) {
       const glwmError = this.handleError(error);
+      if (sessionId !== this.sessionId) {
+        // As above: report the failure, but leave the new session's state alone
+        throw this.reportError(glwmError);
+      }
       try {
         this.setState({ status: 'error', error: glwmError });
       } finally {

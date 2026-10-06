@@ -232,6 +232,34 @@ describe('RPCProvider', () => {
       });
     });
 
+    it('should keep the last error, not the first, when a fallback also fails', async () => {
+      const provider = new RPCProvider(
+        {
+          provider: 'custom',
+          customUrl: 'https://rpc.example.com',
+          fallbackUrls: ['https://fallback.example.com'],
+          retryAttempts: 1,
+        },
+        137
+      );
+      await provider.initialize();
+      const [primary] = ethers.JsonRpcProvider.mock.results.map((r) => r.value as unknown);
+
+      const thrown = await provider
+        .call(async (p) => {
+          throw p === primary
+            ? new Error('timeout')
+            : new Error('execution reverted: "Pausable: paused"');
+        })
+        .catch((e: unknown) => e);
+
+      expect(thrown).toMatchObject({
+        code: 'RPC_ERROR',
+        message: expect.stringContaining('Pausable: paused'),
+        details: { message: 'execution reverted: "Pausable: paused"' },
+      });
+    });
+
     it('should fall back to secondary provider after primary exhausted', async () => {
       const provider = new RPCProvider(
         {

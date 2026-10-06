@@ -47,7 +47,8 @@ try {
   }
 } catch (error) {
   // The license could not be verified (e.g. RPC_ERROR, or CONTRACT_ERROR if the contract is
-  // paused). This is not a "no license" answer: let the user retry.
+  // paused). This is not a "no license" answer: let the user retry. The SDK is now in the
+  // 'error' state, so a retry calls glwm.initialize() first, then glwm.verifyAndPlay() again.
   console.error('Could not verify the license:', error);
 }
 ```
@@ -115,7 +116,8 @@ function App() {
         // Start your game
       }
     } catch (error) {
-      // The license could not be verified (e.g. RPC_ERROR): show a retry option, not a mint
+      // The license could not be verified (e.g. RPC_ERROR): show a retry option, not a mint.
+      // Retrying means calling glwm.initialize() again before glwm.verifyAndPlay().
       console.error(error);
     }
   };
@@ -186,7 +188,7 @@ Your minting portal communicates with the SDK via `postMessage`. The SDK sends w
 
 **Stale verification** — Clear the cache with `glwm.clearCache()` or use `glwm.verifyLicenseFresh()` to bypass it.
 
-**`RPC_ERROR` / `CONTRACT_ERROR` from `verifyLicense()` or `verifyAndPlay()`** — The license could not be verified: an RPC call failed after its retries, or the license contract is paused. Nothing is cached and the minting portal is not opened. The SDK is in the `error` state; call `glwm.initialize()` and try again. Configure `rpcProvider.fallbackUrls` to ride out a failing RPC endpoint.
+**`RPC_ERROR` / `CONTRACT_ERROR` from `verifyLicense()` or `verifyAndPlay()`** — The license could not be verified: an RPC call failed after its retries, or the license contract is paused. Nothing is cached and the minting portal is not opened. The SDK is in the `error` state; call `glwm.initialize()` and try again. Configure `rpcProvider.fallbackUrls` to ride out a failing RPC endpoint: the license reads fall back to them.
 
 ## Next Steps
 

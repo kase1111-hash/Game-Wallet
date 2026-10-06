@@ -144,6 +144,46 @@ describe('LicenseVerifier', () => {
     });
   });
 
+  describe('fallback providers', () => {
+    it('reads the license contract through the fallback when the primary RPC fails', async () => {
+      const primary = { url: 'https://primary.example' };
+      const fallback = { url: 'https://fallback.example' };
+      const working = new MockLicenseContract();
+      working.setBalance(WALLET_ADDRESS, 1n);
+      working.setTokenIds(WALLET_ADDRESS, [42n]);
+      working.setOwner('42', WALLET_ADDRESS);
+      working.setTokenURI('42', 'https://metadata.example.com/42');
+      const broken = {
+        getFunction: () => async () => {
+          throw new Error('primary RPC down');
+        },
+      };
+      // A Contract reads through the provider (runner) it is bound to
+      const { Contract } = jest.requireMock('ethers') as { Contract: jest.Mock };
+      Contract.mockImplementation((_address: string, _abi: unknown, runner: unknown) =>
+        runner === fallback ? working : broken
+      );
+      // RPCProvider.call() tries the primary, then each fallback, handing each to the operation
+      const rpc = {
+        getProvider: () => primary,
+        getBlockNumber: async () => 12345678,
+        call: async <T>(fn: (provider: unknown) => Promise<T>): Promise<T> => {
+          try {
+            return await fn(primary);
+          } catch {
+            return fn(fallback);
+          }
+        },
+      };
+      const withFallback = new LicenseVerifier(rpc as never, CONTRACT_ADDRESS);
+      withFallback.initialize();
+
+      const result = await withFallback.verifyLicense(WALLET_ADDRESS);
+
+      expect(result).toMatchObject({ isValid: true, license: { tokenId: '42' } });
+    });
+  });
+
   // A paused contract is not a verdict: ownership could not be read, and minting cannot work on
   // it. It is thrown as CONTRACT_ERROR, not returned as { reason: 'contract_paused' }.
   describe('verifyLicense() — contract paused', () => {
@@ -157,6 +197,7 @@ describe('LicenseVerifier', () => {
         code: 'CONTRACT_ERROR',
         message: expect.stringContaining('paused'),
         recoverable: true,
+        suggestedAction: expect.stringContaining('unpaused'),
       });
       // A JSON-safe summary of the revert
       expect(thrown.details).toEqual({ name: 'Error', message: expect.stringContaining('paused') });
@@ -175,7 +216,8 @@ describe('LicenseVerifier', () => {
 
       expect(thrown).toMatchObject({ code: 'CONTRACT_ERROR' });
       expect(thrown.message).toContain('Execution reverted: contract is paused');
-      expect(thrown.details).toBe(rpcError); // the RPC layer's GLWMError, already JSON-safe
+      // A summary of the RPC layer's error (which here carries no details of its own)
+      expect(thrown.details).toEqual({ code: 'RPC_ERROR', message: rpcError.message });
     });
   });
 

@@ -102,21 +102,33 @@ export function summarizeError(error: unknown): ErrorSummary {
   if (typeof error !== 'object' || error === null) {
     return { message: String(error) };
   }
-  const fields = error as Record<string, unknown>;
-  const summary: ErrorSummary = {
-    message: typeof fields.message === 'string' ? fields.message : 'Unknown error',
+  // A getter that throws (some error classes compute fields lazily) must not escape from here
+  const read = (key: string): unknown => {
+    try {
+      return (error as Record<string, unknown>)[key];
+    } catch {
+      return undefined;
+    }
   };
-  if (typeof fields.name === 'string') {
-    summary.name = fields.name;
+  const message = read('message');
+  const summary: ErrorSummary = {
+    message: typeof message === 'string' ? message : 'Unknown error',
+  };
+  const name = read('name');
+  if (typeof name === 'string') {
+    summary.name = name;
   }
-  if (typeof fields.code === 'string' || typeof fields.code === 'number') {
-    summary.code = fields.code;
+  const code = read('code');
+  if (typeof code === 'string' || typeof code === 'number') {
+    summary.code = code;
   }
-  if (typeof fields.shortMessage === 'string') {
-    summary.shortMessage = fields.shortMessage;
+  const shortMessage = read('shortMessage');
+  if (typeof shortMessage === 'string') {
+    summary.shortMessage = shortMessage;
   }
-  if (typeof fields.reason === 'string') {
-    summary.reason = fields.reason;
+  const reason = read('reason');
+  if (typeof reason === 'string') {
+    summary.reason = reason;
   }
   return summary;
 }

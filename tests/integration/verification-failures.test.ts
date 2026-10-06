@@ -345,7 +345,9 @@ describe('verification failures are errors, not license verdicts', () => {
       expectReportedOnce(thrown, 'CONTRACT_ERROR');
       expect(thrown.message).toMatch(/paused/);
       expect(thrown.recoverable).toBe(true);
-      expect(thrown.details).toMatchObject({ code: 'RPC_ERROR' }); // the failed RPC call
+      // The same JSON-safe summary of the underlying revert as an RPC_ERROR's details
+      expect(thrown.details).toEqual({ name: 'Error', message: pausedRevert().message });
+      expect(thrown.suggestedAction).toEqual(expect.stringContaining('unpaused'));
       expect(sdk.getState()).toEqual({ status: 'error', error: thrown });
       expect(probe.statuses).not.toContain('no_license');
       expect(cachedVerification()).toBeNull();
@@ -541,12 +543,14 @@ describe('verification failures are errors, not license verdicts', () => {
       }
     );
   });
+
   describe('error details and recovery hints', () => {
     it('details are JSON-safe: an ethers CALL_EXCEPTION carries BigInt call arguments', async () => {
       await connected();
       const revert = Object.assign(new Error('execution reverted (unknown custom error)'), {
         code: 'CALL_EXCEPTION',
         shortMessage: 'execution reverted (unknown custom error)',
+        reason: 'ERC721: invalid token ID',
         invocation: { method: 'tokenURI', args: [1n] },
       });
       failCall('tokenURI', revert);
@@ -563,6 +567,7 @@ describe('verification failures are errors, not license verdicts', () => {
           name: 'Error',
           code: 'CALL_EXCEPTION',
           shortMessage: 'execution reverted (unknown custom error)',
+          reason: 'ERC721: invalid token ID',
         },
       });
       expect(JSON.parse(logged)).toMatchObject({ code: 'RPC_ERROR' });
@@ -608,6 +613,10 @@ describe('verification failures are errors, not license verdicts', () => {
         const thrown = (await sdk.verifyLicense().catch((e: unknown) => e)) as GLWMError;
 
         expectReportedOnce(thrown, 'VERIFICATION_FAILED');
+        expect(thrown).toMatchObject({
+          recoverable: true,
+          details: { reason: extra.reason ?? null },
+        });
         expect(probe.statusAtError).toEqual(['error']);
         expect(probe.statuses).not.toContain('no_license');
         expect(cachedVerification()).toBeNull();
@@ -646,6 +655,135 @@ describe('verification failures are errors, not license verdicts', () => {
         expect(cachedVerification(OTHER_ADDRESS)).toBeNull();
       }
     );
+  });
+
+  // initialize() starts a new session (the wallet is disconnected, the state is
+  // 'awaiting_wallet'). A verification of the previous session that settles afterwards, or while
+  // initialize() is still running, must not move the new session to 'error' (which only another
+  // initialize() leaves), nor cache or announce its answer there.
+  describe('a verification still in flight when initialize() runs', () => {
+    interface Held<T> {
+      /** Resolves once the call is made */
+      reached: Promise<void>;
+      resolve: (value: T) => void;
+      reject: (error: Error) => void;
+    }
+
+    /** The next call to `call` answers only when the test settles it */
+    function hold<T>(call: RpcCall): Held<T> {
+      let reachedCall!: () => void;
+      const reached = new Promise<void>((resolve) => {
+        reachedCall = resolve;
+      });
+      const answer: Pick<Held<T>, 'resolve' | 'reject'> = {
+        resolve: () => undefined,
+        reject: () => undefined,
+      };
+      mockState[call].mockImplementationOnce(
+        () =>
+          new Promise<T>((resolve, reject) => {
+            answer.resolve = resolve;
+            answer.reject = reject;
+            reachedCall();
+          })
+      );
+      return {
+        reached,
+        resolve: (value) => answer.resolve(value),
+        reject: (error) => answer.reject(error),
+      };
+    }
+
+    it('fails after initialize() -> reported once, the new session is untouched and usable', async () => {
+      const probe = await connected();
+      const balanceOf = hold<bigint>('balanceOf');
+      const pending = sdk.verifyLicense().catch((e: unknown) => e);
+      await balanceOf.reached;
+      await sdk.initialize();
+      probe.statuses.length = 0;
+
+      balanceOf.reject(rpcDown());
+      const thrown = await pending;
+
+      expectReportedOnce(thrown, 'RPC_ERROR');
+      expect(probe.statuses).toEqual([]);
+      expect(sdk.getState().status).toBe('awaiting_wallet');
+      expect(cachedVerification()).toBeNull();
+      // The new session works without another initialize()
+      await sdk.connectWallet('metamask');
+      await expect(sdk.verifyLicense()).resolves.toMatchObject({ isValid: true });
+    });
+
+    it('fails while initialize() is running -> the new session does not start in error', async () => {
+      const probe = await connected();
+      const balanceOf = hold<bigint>('balanceOf');
+      const pending = sdk.verifyLicense().catch((e: unknown) => e);
+      await balanceOf.reached;
+      // initialize() waits on its RPC connection test while the verification fails
+      const connectionTest = hold<number>('getBlockNumber');
+      const initializing = sdk.initialize();
+      await connectionTest.reached;
+
+      balanceOf.reject(rpcDown());
+      const thrown = await pending;
+      connectionTest.resolve(12345678);
+      await initializing;
+
+      expectReportedOnce(thrown, 'RPC_ERROR');
+      expect(probe.statusAtError).toEqual(['initializing']);
+      expect(probe.statuses).not.toContain('error');
+      expect(sdk.getState().status).toBe('awaiting_wallet');
+    });
+
+    it('succeeds after initialize() -> returned to its caller only', async () => {
+      const probe = await connected();
+      const balanceOf = hold<bigint>('balanceOf');
+      const pending = sdk.verifyLicense();
+      await balanceOf.reached;
+      await sdk.initialize();
+      probe.statuses.length = 0;
+
+      balanceOf.resolve(1n);
+
+      await expect(pending).resolves.toMatchObject({ isValid: true });
+      expect(probe.statuses).toEqual([]);
+      expect(cachedVerification()).toBeNull();
+      expectNoVerdictAnnounced();
+    });
+
+    it.each<[string, (held: Held<bigint>) => void]>([
+      ['fails', (held) => held.reject(rpcDown())],
+      ['succeeds', (held) => held.resolve(1n)],
+    ])('%s after dispose() -> the SDK stays uninitialized', async (_name, settle) => {
+      await connected();
+      const balanceOf = hold<bigint>('balanceOf');
+      const pending = sdk.verifyLicense().catch((e: unknown) => e);
+      await balanceOf.reached;
+      await sdk.dispose();
+
+      settle(balanceOf);
+      await pending;
+
+      expect(sdk.getState()).toEqual({ status: 'uninitialized' });
+    });
+
+    it('verifyAndPlay(): no license after initialize() -> the portal does not open', async () => {
+      const probe = await connected();
+      closePortalWhenOpened();
+      const balanceOf = hold<bigint>('balanceOf');
+      const pending = sdk.verifyAndPlay();
+      await balanceOf.reached;
+      await sdk.initialize();
+      probe.statuses.length = 0;
+
+      balanceOf.resolve(0n);
+
+      await expect(pending).resolves.toMatchObject({ reason: 'no_license_found' });
+      expect(probe.portalOpens).toBe(0);
+      expect(portalOverlay()).toBeNull();
+      expect(probe.statuses).toEqual([]);
+      expect(onError).not.toHaveBeenCalled();
+    });
   });
 
   describe('verifyLicenseFresh()', () => {

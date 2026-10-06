@@ -2,6 +2,7 @@ import {
   generateSessionId,
   checksumAddress,
   isValidAddress,
+  summarizeError,
 } from '../../src/utils/helpers';
 
 describe('helpers', () => {
@@ -52,6 +53,51 @@ describe('helpers', () => {
       expect(isValidAddress('0x123')).toBe(false);
       expect(isValidAddress('')).toBe(false);
       // Note: ethers v6 isAddress() accepts addresses without 0x prefix
+    });
+  });
+
+  describe('summarizeError', () => {
+    it('keeps the message, name and the ethers code / shortMessage / reason as JSON-safe values', () => {
+      const ethersError = Object.assign(
+        new Error('execution reverted: "ERC721: invalid token ID"'),
+        {
+          code: 'CALL_EXCEPTION',
+          shortMessage: 'execution reverted: "ERC721: invalid token ID"',
+          reason: 'ERC721: invalid token ID',
+          invocation: { method: 'tokenURI', args: [42n] }, // BigInt: JSON.stringify() would throw
+        }
+      );
+
+      const summary = summarizeError(ethersError);
+
+      expect(summary).toEqual({
+        message: 'execution reverted: "ERC721: invalid token ID"',
+        name: 'Error',
+        code: 'CALL_EXCEPTION',
+        shortMessage: 'execution reverted: "ERC721: invalid token ID"',
+        reason: 'ERC721: invalid token ID',
+      });
+      expect(() => JSON.stringify(summary)).not.toThrow();
+    });
+
+    it('handles non-object values and objects without a string message', () => {
+      expect(summarizeError('boom')).toEqual({ message: 'boom' });
+      expect(summarizeError(undefined)).toEqual({ message: 'undefined' });
+      expect(summarizeError({ message: 42, code: 7 })).toEqual({
+        message: 'Unknown error',
+        code: 7,
+      });
+    });
+
+    it('does not throw when reading a field throws', () => {
+      const error = new Error('execution reverted');
+      Object.defineProperty(error, 'reason', {
+        get: () => {
+          throw new Error('lazy getter failed');
+        },
+      });
+
+      expect(summarizeError(error)).toEqual({ message: 'execution reverted', name: 'Error' });
     });
   });
 });

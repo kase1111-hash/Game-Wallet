@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paused license contract as `CONTRACT_ERROR` (was `RPC_ERROR`)
 - The `RPC_ERROR` thrown when an RPC call fails (`RPCProvider.call()`) carries a JSON-safe summary
   of the last underlying error as `details` (message, name, and the ethers code / shortMessage /
-  reason), and a `suggestedAction`
+  reason), and a `suggestedAction`. A paused contract's `CONTRACT_ERROR` carries the same summary
+  and a `suggestedAction`
 - A verifier result that is not a verdict (a deprecated or unknown `reason`) is rejected as
   `VERIFICATION_FAILED` instead of being treated as "no license"
 
@@ -78,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verification (see Changed): reported once, never cached, and `verifyAndPlay()` rejects without
   opening the portal. A `verification_failed` / `contract_paused` result cached by an earlier
   version is ignored, and the license is verified again
+- License contract reads (`balanceOf`, `tokenOfOwnerByIndex`, `tokenURI`, `ownerOf`) now fall back
+  to `rpcProvider.fallbackUrls` when the primary RPC endpoint fails; they used to retry the primary
+  endpoint only
+- A verification still running when `initialize()` or `dispose()` is called no longer changes the
+  new session: its verdict is not cached or announced, its failure (still reported) does not move
+  the state to `error`, and `verifyAndPlay()` does not open the minting portal for it
 
 ### Removed
 - Unused utilities: `Metrics.ts`, `ErrorReporter.ts`, `Config.ts` and their tests
