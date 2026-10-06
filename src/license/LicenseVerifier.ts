@@ -9,7 +9,7 @@ import type {
   GLWMError,
 } from '../types';
 import { Logger } from '../utils/Logger';
-import { isValidAddress } from '../utils/helpers';
+import { isValidAddress, summarizeError } from '../utils/helpers';
 
 const logger = Logger.getInstance().child('LicenseVerifier');
 
@@ -38,6 +38,34 @@ function getErrorMessage(error: unknown): string {
     return (error as { message: string }).message;
   }
   return 'Unknown error';
+}
+
+function isGLWMError(error: unknown): error is GLWMError {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    'message' in error &&
+    'recoverable' in error
+  );
+}
+
+/**
+ * A failed RPC read as a GLWMError: a GLWMError from the RPC layer as is (RPCProvider.call()
+ * already wraps failures in one), anything else as RPC_ERROR with a JSON-safe summary of the
+ * original as `details`
+ */
+function toRpcError(operation: string, error: unknown): GLWMError {
+  if (isGLWMError(error)) {
+    return error;
+  }
+  return {
+    code: 'RPC_ERROR',
+    message: `${operation} failed: ${getErrorMessage(error)}`,
+    details: summarizeError(error),
+    recoverable: true,
+    suggestedAction: 'Try again. If it keeps failing, check the RPC provider configuration.',
+  };
 }
 
 // Minimal ERC721 ABI for license verification
@@ -71,6 +99,12 @@ export class LicenseVerifier {
 
   /**
    * Verify if an address owns a valid license
+   *
+   * Resolves only with a verdict about the license: valid, `no_license_found` or
+   * `license_expired`. A read that fails says nothing about the license, so it is thrown as a
+   * GLWMError instead of being returned as a result: `RPC_ERROR` when an RPC call fails (block
+   * number, balanceOf, tokenOfOwnerByIndex, tokenURI), `CONTRACT_ERROR` when the license contract
+   * is paused. A metadata fetch that fails still falls back to default metadata.
    */
   async verifyLicense(address: string): Promise<LicenseVerificationResult> {
     if (!this.contract) {
@@ -82,96 +116,54 @@ export class LicenseVerifier {
     }
 
     const contract = this.contract;
-    const blockNumber = await this.rpcProvider.getBlockNumber();
+    const blockNumber = await this.getBlockNumber();
     const checkedAt = Date.now();
 
-    try {
-      // Check if the address owns any tokens
-      const balance = await this.rpcProvider.call(async () => {
-        const balanceOf = contract.getFunction('balanceOf');
-        return (await balanceOf(address)) as bigint;
-      });
+    // Check if the address owns any tokens
+    const balance = await this.callContract<bigint>(contract, 'balanceOf', address);
 
-      if (balance === 0n) {
-        return {
-          isValid: false,
-          license: null,
-          checkedAt,
-          blockNumber,
-          reason: 'no_license_found',
-        };
-      }
-
-      // Get the first token owned by the address
-      const tokenId = await this.rpcProvider.call(async () => {
-        const tokenOfOwnerByIndex = contract.getFunction('tokenOfOwnerByIndex');
-        return (await tokenOfOwnerByIndex(address, 0)) as bigint;
-      });
-
-      // Fetch license details
-      const license = await this.getLicenseById(tokenId.toString(), address);
-
-      // Check if license is expired
-      if (license.metadata.attributes.expiresAt) {
-        const now = Math.floor(Date.now() / 1000);
-        if (license.metadata.attributes.expiresAt < now) {
-          return {
-            isValid: false,
-            license,
-            checkedAt,
-            blockNumber,
-            reason: 'license_expired',
-          };
-        }
-      }
-
-      return {
-        isValid: true,
-        license,
-        checkedAt,
-        blockNumber,
-      };
-    } catch (error) {
-      const message = getErrorMessage(error);
-      const errorDetails = error instanceof Error ? error.stack : message;
-
-      // Log the error for debugging
-      logger.error('License verification failed', {
-        address,
-        error: message,
-        details: errorDetails,
-      });
-
-      // Handle specific contract errors
-      if (message.includes('paused')) {
-        logger.warn('Contract is paused', { address });
-        return {
-          isValid: false,
-          license: null,
-          checkedAt,
-          blockNumber,
-          reason: 'contract_paused',
-        };
-      }
-
-      // Include error details in the result for better debugging
+    if (balance === 0n) {
       return {
         isValid: false,
         license: null,
         checkedAt,
         blockNumber,
-        reason: 'verification_failed',
-        // Store error message in a way consumers can access for debugging
-        ...(typeof process !== 'undefined' &&
-          process.env.NODE_ENV !== 'production' && {
-            _debug: { error: message, stack: errorDetails },
-          }),
+        reason: 'no_license_found',
       };
     }
+
+    // Get the first token owned by the address
+    const tokenId = await this.callContract<bigint>(contract, 'tokenOfOwnerByIndex', address, 0);
+
+    // Fetch license details
+    const license = await this.getLicenseById(tokenId.toString(), address);
+
+    // Check if license is expired
+    if (license.metadata.attributes.expiresAt) {
+      const now = Math.floor(Date.now() / 1000);
+      if (license.metadata.attributes.expiresAt < now) {
+        return {
+          isValid: false,
+          license,
+          checkedAt,
+          blockNumber,
+          reason: 'license_expired',
+        };
+      }
+    }
+
+    return {
+      isValid: true,
+      license,
+      checkedAt,
+      blockNumber,
+    };
   }
 
   /**
    * Get all licenses owned by an address
+   *
+   * A failed read is thrown as in verifyLicense()
    */
   async getAllLicenses(address: string): Promise<LicenseNFT[]> {
     if (!this.contract) {
@@ -180,19 +172,12 @@ export class LicenseVerifier {
 
     const contract = this.contract;
 
-    const balance = await this.rpcProvider.call(async () => {
-      const balanceOf = contract.getFunction('balanceOf');
-      return (await balanceOf(address)) as bigint;
-    });
+    const balance = await this.callContract<bigint>(contract, 'balanceOf', address);
 
     // Fetch all token IDs first
     const tokenIds: bigint[] = [];
     for (let i = 0n; i < balance; i++) {
-      const tokenId = await this.rpcProvider.call(async () => {
-        const tokenOfOwnerByIndex = contract.getFunction('tokenOfOwnerByIndex');
-        return (await tokenOfOwnerByIndex(address, i)) as bigint;
-      });
-      tokenIds.push(tokenId);
+      tokenIds.push(await this.callContract<bigint>(contract, 'tokenOfOwnerByIndex', address, i));
     }
 
     // Fetch license details in parallel
@@ -205,6 +190,8 @@ export class LicenseVerifier {
 
   /**
    * Get license details by token ID
+   *
+   * A failed read is thrown as in verifyLicense()
    */
   async getLicenseById(tokenId: string, owner?: string): Promise<LicenseNFT> {
     if (!this.contract) {
@@ -214,18 +201,10 @@ export class LicenseVerifier {
     const contract = this.contract;
 
     // Get owner if not provided
-    const licenseOwner =
-      owner ??
-      (await this.rpcProvider.call(async () => {
-        const ownerOf = contract.getFunction('ownerOf');
-        return (await ownerOf(tokenId)) as string;
-      }));
+    const licenseOwner = owner ?? (await this.callContract<string>(contract, 'ownerOf', tokenId));
 
     // Get token URI
-    const tokenUri = await this.rpcProvider.call(async () => {
-      const tokenURI = contract.getFunction('tokenURI');
-      return (await tokenURI(tokenId)) as string;
-    });
+    const tokenUri = await this.callContract<string>(contract, 'tokenURI', tokenId);
 
     // Fetch and parse metadata
     const metadata = await this.fetchMetadata(tokenUri);
@@ -237,6 +216,46 @@ export class LicenseVerifier {
       metadata,
       // Note: mintedAt and transactionHash require event querying and are omitted
     };
+  }
+
+  /**
+   * Get the current block number. A failure is thrown as RPC_ERROR (see toRpcError()).
+   */
+  private async getBlockNumber(): Promise<number> {
+    try {
+      return await this.rpcProvider.getBlockNumber();
+    } catch (error) {
+      throw toRpcError('getBlockNumber', error);
+    }
+  }
+
+  /**
+   * Call a view function of the license contract, with the RPC provider's retry and fallback.
+   *
+   * A failure is thrown, never turned into a verdict about the license: as CONTRACT_ERROR if the
+   * call reverted because the contract is paused (with the failed call as `details`), else as
+   * RPC_ERROR (see toRpcError()).
+   */
+  private async callContract<T>(contract: Contract, name: string, ...args: unknown[]): Promise<T> {
+    try {
+      return await this.rpcProvider.call(
+        async () => (await contract.getFunction(name)(...args)) as T
+      );
+    } catch (error) {
+      const message = getErrorMessage(error);
+      if (message.includes('paused')) {
+        logger.warn('License contract is paused', { call: name });
+        throw {
+          code: 'CONTRACT_ERROR',
+          message: `License contract is paused: ${message}`,
+          // The RPC layer's GLWMError (already JSON-safe), or a summary of anything else
+          details: isGLWMError(error) ? error : summarizeError(error),
+          recoverable: true,
+          suggestedAction: 'Try again once the license contract is unpaused.',
+        } satisfies GLWMError;
+      }
+      throw toRpcError(name, error);
+    }
   }
 
   /**

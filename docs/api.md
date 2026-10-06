@@ -28,8 +28,12 @@ const glwm = new GLWM(config);
 | `connectWallet()` | `async connectWallet(provider?: WalletProvider): Promise<WalletConnection>` | Connect a wallet |
 | `disconnectWallet()` | `async disconnectWallet(): Promise<void>` | Disconnect the current wallet |
 | `getWalletSession()` | `getWalletSession(): WalletSession` | Get current wallet session info |
-| `verifyLicense()` | `async verifyLicense(address?: string): Promise<LicenseVerificationResult>` | Verify NFT license ownership |
-| `verifyAndPlay()` | `async verifyAndPlay(provider?: WalletProvider): Promise<LicenseVerificationResult>` | Connect + verify in one call; opens portal if no license |
+| `verifyLicense()` | `async verifyLicense(): Promise<LicenseVerificationResult>` | Verify the connected wallet's license (uses the cache). Resolves with a verdict; if the license cannot be verified it throws, reports the error and moves to `error`, and nothing is cached (see [Verification failures](#verification-failures)) |
+| `verifyLicenseFresh()` | `async verifyLicenseFresh(): Promise<LicenseVerificationResult>` | `verifyLicense()` bypassing the cache |
+| `verifyAndPlay()` | `async verifyAndPlay(): Promise<LicenseVerificationResult>` | Connect + verify in one call; opens the minting portal only for `no_license_found` / `license_expired`, then verifies again. Rejects if the license cannot be verified, before or after the portal |
+| `checkLicenseForAddress()` | `async checkLicenseForAddress(address: string): Promise<LicenseVerificationResult>` | Verify any address (read-only): resolves with a verdict; a verification failure is reported and thrown without changing the state or the cache |
+| `getLicenseDetails()` | `async getLicenseDetails(tokenId: string): Promise<LicenseNFT>` | A license's owner and metadata; read failures are reported and thrown as in `checkLicenseForAddress()` |
+| `getAllLicenses()` | `async getAllLicenses(): Promise<LicenseNFT[]>` | All licenses of the connected wallet; read failures are reported and thrown as in `checkLicenseForAddress()` |
 | `openMintingPortal()` | `async openMintingPortal(): Promise<void>` | Opens the minting portal (iframe or redirect); the state becomes `minting_portal_open` once it is open. If it cannot open, the state is unchanged and the error is thrown |
 | `closeMintingPortal()` | `closeMintingPortal(): void` | Closes the minting portal; does nothing if it is not open |
 | `getAvailableProviders()` | `getAvailableProviders(): WalletProvider[]` | List detected wallet providers |
@@ -159,6 +163,35 @@ interface LicenseVerificationResult {
 }
 ```
 
+A result is always a verdict about the license:
+
+| `isValid` | `reason` | Meaning | `verifyAndPlay()` |
+|:---------:|----------|---------|-------------------|
+| `true` | — | The wallet owns a license that has not expired | Resolves; state `license_valid` |
+| `false` | `no_license_found` | The wallet owns no license token | Opens the minting portal |
+| `false` | `license_expired` | The wallet's license has expired (`license` is set) | Opens the minting portal |
+
+`verifyLicense()` caches verdicts for `cacheConfig.ttlSeconds` (5 minutes by default).
+
+#### Verification failures
+
+A verification that cannot complete says nothing about the license, so it is not a result. It is
+thrown as a `GLWMError`. Its `details` is a JSON-safe summary of the underlying error (`message`,
+`name`, and the ethers `code`, `shortMessage` and `reason` when present), so it can be logged or
+sent to telemetry as is:
+
+| Code | When |
+|------|------|
+| `RPC_ERROR` | An RPC call fails after the configured retries and fallbacks: the block number, `balanceOf`, `tokenOfOwnerByIndex`, `tokenURI` (or `ownerOf` in `getLicenseDetails()`). Has a `suggestedAction` |
+| `CONTRACT_ERROR` | A contract read reverts because the license contract is paused. `recoverable: true`, since the contract can be unpaused; the minting portal is not opened, since minting on a paused contract cannot work |
+| `VERIFICATION_FAILED` | The license verifier returned a result that is not a verdict (a deprecated or unknown `reason`). Guards against ever treating such a result as "no license" |
+
+The error reaches `onError` and the `ERROR` event exactly once, and is the error the call rejects
+with. It is never cached and never moves the state to `no_license`. `verifyLicense()` and
+`verifyAndPlay()` move to the `error` state (call `initialize()` to retry); the read-only
+`checkLicenseForAddress()`, `getLicenseDetails()` and `getAllLicenses()` leave the state unchanged.
+A token's metadata that cannot be fetched is not a failure: default metadata is used.
+
 ### LicenseNFT
 
 ```typescript
@@ -197,6 +230,12 @@ type LicenseEdition = 'standard' | 'deluxe' | 'ultimate' | 'founders' | 'limited
 type LicenseInvalidReason = 'no_license_found' | 'license_expired' | 'wrong_chain' | 'contract_paused' | 'verification_failed';
 ```
 
+Only `no_license_found` and `license_expired` are produced. `contract_paused` and
+`verification_failed` are deprecated: a paused contract and a failed RPC call are now thrown (see
+[Verification failures](#verification-failures)). They stay in the type so that code checking for
+them still compiles, and will be removed in a future breaking release. `wrong_chain` is not
+produced (a wallet on the wrong chain is reported as `CHAIN_MISMATCH`).
+
 ---
 
 ## Error Types
@@ -222,8 +261,8 @@ interface GLWMError {
 | `WALLET_DISCONNECTED` | yes | Wallet disconnected unexpectedly |
 | `CHAIN_MISMATCH` | yes | Wrong chain, needs switch |
 | `RPC_ERROR` | yes | RPC provider call failed |
-| `CONTRACT_ERROR` | no | Smart contract call failed |
-| `VERIFICATION_FAILED` | yes | License check failed |
+| `CONTRACT_ERROR` | no (yes when the license contract is paused) | Smart contract call failed, or the license contract is paused |
+| `VERIFICATION_FAILED` | yes | The license verifier returned a result that is not a verdict (see [Verification failures](#verification-failures)) |
 | `MINT_FAILED` | no | Mint transaction reverted |
 | `MINT_REJECTED` | yes | User rejected mint transaction |
 | `INSUFFICIENT_FUNDS` | yes | Not enough ETH/MATIC for mint |

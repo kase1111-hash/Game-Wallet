@@ -212,6 +212,26 @@ describe('RPCProvider', () => {
       });
     }, 15000);
 
+    it('should keep the last underlying error as details', async () => {
+      const provider = new RPCProvider(
+        { provider: 'custom', customUrl: 'https://rpc.example.com', retryAttempts: 1 },
+        137
+      );
+      await provider.initialize();
+      const cause = new Error('execution reverted: "Pausable: paused"');
+
+      await expect(
+        provider.call(async () => {
+          throw cause;
+        })
+      ).rejects.toMatchObject({
+        code: 'RPC_ERROR',
+        recoverable: true,
+        details: { name: 'Error', message: cause.message },
+        suggestedAction: expect.stringContaining('Try again'),
+      });
+    });
+
     it('should fall back to secondary provider after primary exhausted', async () => {
       const provider = new RPCProvider(
         {

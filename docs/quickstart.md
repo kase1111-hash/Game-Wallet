@@ -35,21 +35,32 @@ await glwm.initialize();
 The simplest integration — one call handles everything:
 
 ```typescript
-const result = await glwm.verifyAndPlay();
+try {
+  const result = await glwm.verifyAndPlay();
 
-if (result.isValid) {
-  console.log('License valid! Token:', result.license?.tokenId);
-  startGame();
-} else {
-  console.log('No valid license.', result.reason);
+  if (result.isValid) {
+    console.log('License valid! Token:', result.license?.tokenId);
+    startGame();
+  } else {
+    // 'no_license_found' or 'license_expired': the user closed the portal without minting
+    console.log('No valid license.', result.reason);
+  }
+} catch (error) {
+  // The license could not be verified (e.g. RPC_ERROR, or CONTRACT_ERROR if the contract is
+  // paused). This is not a "no license" answer: let the user retry.
+  console.error('Could not verify the license:', error);
 }
 ```
 
 `verifyAndPlay()` automatically:
 1. Connects the wallet if not already connected
 2. Checks for a valid license NFT
-3. Opens the minting portal if no license exists
+3. Opens the minting portal if the wallet has no license (or an expired one)
 4. Re-verifies after the portal closes
+
+If the license cannot be checked (an RPC call fails, or the license contract is paused),
+`verifyAndPlay()` rejects instead, before or after the portal, and never offers a mint because of
+it. The error also reaches `onError`.
 
 ## 4. Step-by-Step (Advanced)
 
@@ -98,9 +109,14 @@ function App() {
   }, [glwm]);
 
   const handlePlay = async () => {
-    const result = await glwm.verifyAndPlay();
-    if (result.isValid) {
-      // Start your game
+    try {
+      const result = await glwm.verifyAndPlay();
+      if (result.isValid) {
+        // Start your game
+      }
+    } catch (error) {
+      // The license could not be verified (e.g. RPC_ERROR): show a retry option, not a mint
+      console.error(error);
     }
   };
 
@@ -169,6 +185,8 @@ Your minting portal communicates with the SDK via `postMessage`. The SDK sends w
 **Chain mismatch** — The wallet is on a different chain than `chainId`. Use `glwm.switchChain(chainId)` to prompt the user to switch, or handle via the `onError` callback.
 
 **Stale verification** — Clear the cache with `glwm.clearCache()` or use `glwm.verifyLicenseFresh()` to bypass it.
+
+**`RPC_ERROR` / `CONTRACT_ERROR` from `verifyLicense()` or `verifyAndPlay()`** — The license could not be verified: an RPC call failed after its retries, or the license contract is paused. Nothing is cached and the minting portal is not opened. The SDK is in the `error` state; call `glwm.initialize()` and try again. Configure `rpcProvider.fallbackUrls` to ride out a failing RPC endpoint.
 
 ## Next Steps
 

@@ -21,6 +21,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   callback before `config.onClose`
 - `closeMintingPortal()` no longer resets a non-minting state such as `license_valid` or `error`
   (call `initialize()` to recover from `error`)
+- License verification resolves only with a verdict (valid, `no_license_found`,
+  `license_expired`). When the license cannot be verified, `verifyLicense()`,
+  `verifyLicenseFresh()`, `verifyAndPlay()`, `checkLicenseForAddress()` and
+  `LicenseVerifier.verifyLicense()` now reject with a `GLWMError` instead of resolving with
+  `{ isValid: false, reason: 'verification_failed' }` or `'contract_paused'`: `RPC_ERROR` when an
+  RPC call fails, `CONTRACT_ERROR` (`recoverable: true`) when the license contract is paused.
+  `onLicenseVerified` and `LICENSE_VERIFIED` no longer fire for such a failure, and
+  `verifyLicense()` / `verifyAndPlay()` move to the `error` state (call `initialize()` to retry)
+- `getLicenseDetails()`, `getAllLicenses()` and the matching `LicenseVerifier` methods report a
+  paused license contract as `CONTRACT_ERROR` (was `RPC_ERROR`)
+- The `RPC_ERROR` thrown when an RPC call fails (`RPCProvider.call()`) carries a JSON-safe summary
+  of the last underlying error as `details` (message, name, and the ethers code / shortMessage /
+  reason), and a `suggestedAction`
+- A verifier result that is not a verdict (a deprecated or unknown `reason`) is rejected as
+  `VERIFICATION_FAILED` instead of being treated as "no license"
+
+### Deprecated
+- `LicenseInvalidReason` values `contract_paused` and `verification_failed`: no longer produced
+  (see above). They remain in the type so that code checking for them still compiles
 
 ### Fixed
 - `onError` is now called for every error the SDK surfaces, exactly once, with the error that is
@@ -51,6 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `openMintingPortal()` while the portal is already open (or still opening, e.g. a double-click)
   no longer resets `minting_in_progress`, emits a second `OPEN_MINTING_PORTAL`, or stacks a second
   portal overlay; `closeMintingPortal()` with no portal open no longer changes the state
+- A failed RPC call while verifying a license (`balanceOf`, `tokenOfOwnerByIndex`, `tokenURI`) or a
+  paused license contract was treated as "no license": it never reached `onError` or the `ERROR`
+  event, was cached for the cache TTL, moved the state to `no_license`, and made `verifyAndPlay()`
+  open the minting portal, offering a mint to a user who may already own a license (also after a
+  mint, when the re-verification failed). It is now an error on every RPC call of the
+  verification (see Changed): reported once, never cached, and `verifyAndPlay()` rejects without
+  opening the portal. A `verification_failed` / `contract_paused` result cached by an earlier
+  version is ignored, and the license is verified again
 
 ### Removed
 - Unused utilities: `Metrics.ts`, `ErrorReporter.ts`, `Config.ts` and their tests

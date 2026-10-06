@@ -9,6 +9,7 @@ import { LicenseVerifier } from '../../src/license';
 import { MockRPCProvider } from '../mocks/rpc-provider';
 import { MockLicenseContract, createMockMetadata } from '../mocks/license-contract';
 import { Logger } from '../../src/utils/Logger';
+import type { GLWMError } from '../../src/types';
 
 // Mock ethers Contract to return our mock
 jest.mock('ethers', () => ({
@@ -28,6 +29,37 @@ describe('LicenseVerifier', () => {
   let rpcProvider: MockRPCProvider;
   let mockContract: MockLicenseContract;
   let verifier: LicenseVerifier;
+
+  /** WALLET_ADDRESS owns token 42, with metadata */
+  function ownsToken42(): void {
+    mockContract.setBalance(WALLET_ADDRESS, 1n);
+    mockContract.setTokenIds(WALLET_ADDRESS, [42n]);
+    mockContract.setOwner('42', WALLET_ADDRESS);
+    mockContract.setTokenURI('42', 'https://metadata.example.com/42');
+  }
+
+  /** Make one contract function reject with `error`; the others keep working */
+  function failContractCall(name: string, error: unknown): void {
+    const getFunction = mockContract.getFunction.bind(mockContract);
+    jest.spyOn(mockContract, 'getFunction').mockImplementation((fn: string) =>
+      fn === name
+        ? async (): Promise<never> => {
+            throw error;
+          }
+        : getFunction(fn)
+    );
+  }
+
+  /** The error a promise rejects with (fails the test if it resolves) */
+  function rejectionOf(promise: Promise<unknown>): Promise<GLWMError> {
+    return promise.then(
+      (value) => {
+        const reason = (value as { reason?: string } | null)?.reason;
+        throw new Error(`Expected a rejection, but it resolved (reason: ${String(reason)})`);
+      },
+      (error: unknown) => error as GLWMError
+    );
+  }
 
   beforeEach(() => {
     Logger.resetInstance();
@@ -92,15 +124,16 @@ describe('LicenseVerifier', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => createMockMetadata({
-          attributes: [
-            { trait_type: 'version', value: '1.0' },
-            { trait_type: 'edition', value: 'standard' },
-            { trait_type: 'minted_by', value: WALLET_ADDRESS },
-            { trait_type: 'game_id', value: 'test-game' },
-            { trait_type: 'expires_at', value: pastTimestamp },
-          ],
-        }),
+        json: async () =>
+          createMockMetadata({
+            attributes: [
+              { trait_type: 'version', value: '1.0' },
+              { trait_type: 'edition', value: 'standard' },
+              { trait_type: 'minted_by', value: WALLET_ADDRESS },
+              { trait_type: 'game_id', value: 'test-game' },
+              { trait_type: 'expires_at', value: pastTimestamp },
+            ],
+          }),
       });
 
       const result = await verifier.verifyLicense(WALLET_ADDRESS);
@@ -111,40 +144,92 @@ describe('LicenseVerifier', () => {
     });
   });
 
+  // A paused contract is not a verdict: ownership could not be read, and minting cannot work on
+  // it. It is thrown as CONTRACT_ERROR, not returned as { reason: 'contract_paused' }.
   describe('verifyLicense() — contract paused', () => {
-    it('should return isValid: false with reason contract_paused', async () => {
+    it('should throw CONTRACT_ERROR when a contract read reverts as paused', async () => {
+      ownsToken42();
       mockContract.setPaused(true);
 
-      const result = await verifier.verifyLicense(WALLET_ADDRESS);
+      const thrown = await rejectionOf(verifier.verifyLicense(WALLET_ADDRESS));
 
-      expect(result.isValid).toBe(false);
-      expect(result.reason).toBe('contract_paused');
+      expect(thrown).toMatchObject({
+        code: 'CONTRACT_ERROR',
+        message: expect.stringContaining('paused'),
+        recoverable: true,
+      });
+      // A JSON-safe summary of the revert
+      expect(thrown.details).toEqual({ name: 'Error', message: expect.stringContaining('paused') });
     });
 
     it('should detect paused when the RPC layer throws a GLWMError object', async () => {
       // The real RPCProvider.call() wraps failures in a plain GLWMError, not an Error
-      jest.spyOn(rpcProvider, 'call').mockRejectedValue({
+      const rpcError = {
         code: 'RPC_ERROR',
         message: 'RPC call failed after 3 attempts: Execution reverted: contract is paused',
         recoverable: true,
-      });
+      };
+      jest.spyOn(rpcProvider, 'call').mockRejectedValue(rpcError);
 
-      const result = await verifier.verifyLicense(WALLET_ADDRESS);
+      const thrown = await rejectionOf(verifier.verifyLicense(WALLET_ADDRESS));
 
-      expect(result.isValid).toBe(false);
-      expect(result.reason).toBe('contract_paused');
+      expect(thrown).toMatchObject({ code: 'CONTRACT_ERROR' });
+      expect(thrown.message).toContain('Execution reverted: contract is paused');
+      expect(thrown.details).toBe(rpcError); // the RPC layer's GLWMError, already JSON-safe
     });
   });
 
+  // A failed read is not a verdict either: it is thrown, never returned as
+  // { reason: 'verification_failed' } (which callers took for "no license")
   describe('verifyLicense() — RPC failure', () => {
-    it('should return isValid: false with reason verification_failed', async () => {
+    it('should throw RPC_ERROR when every contract call fails', async () => {
       // Use simulateCallFailure so getBlockNumber succeeds but contract calls fail
       rpcProvider.simulateCallFailure('Connection timeout');
 
-      const result = await verifier.verifyLicense(WALLET_ADDRESS);
+      await expect(verifier.verifyLicense(WALLET_ADDRESS)).rejects.toMatchObject({
+        code: 'RPC_ERROR',
+        message: expect.stringContaining('Connection timeout'),
+        recoverable: true,
+      });
+    });
 
-      expect(result.isValid).toBe(false);
-      expect(result.reason).toBe('verification_failed');
+    it('should throw RPC_ERROR when getBlockNumber fails', async () => {
+      const cause = new Error('Connection refused');
+      jest.spyOn(rpcProvider, 'getBlockNumber').mockRejectedValue(cause);
+
+      const thrown = await rejectionOf(verifier.verifyLicense(WALLET_ADDRESS));
+
+      expect(thrown).toMatchObject({ code: 'RPC_ERROR', recoverable: true });
+      expect(thrown.details).toEqual({ name: 'Error', message: cause.message });
+    });
+
+    it.each(['balanceOf', 'tokenOfOwnerByIndex', 'tokenURI'])(
+      'should throw RPC_ERROR when %s fails, keeping the cause',
+      async (name) => {
+        ownsToken42();
+        const cause = new Error('Connection timeout');
+        failContractCall(name, cause);
+
+        const thrown = await rejectionOf(verifier.verifyLicense(WALLET_ADDRESS));
+
+        expect(thrown).toMatchObject({
+          code: 'RPC_ERROR',
+          message: expect.stringContaining('Connection timeout'),
+          recoverable: true,
+        });
+        expect(thrown.details).toEqual({ name: 'Error', message: cause.message });
+      }
+    );
+
+    it('should rethrow a GLWMError from the RPC layer unchanged', async () => {
+      const rpcError = {
+        code: 'RPC_ERROR',
+        message: 'RPC call failed after 3 attempts: timeout',
+        recoverable: true,
+      };
+      jest.spyOn(rpcProvider, 'call').mockRejectedValue(rpcError);
+
+      await expect(verifier.verifyLicense(WALLET_ADDRESS)).rejects.toBe(rpcError);
     });
   });
 
@@ -194,6 +279,30 @@ describe('LicenseVerifier', () => {
         code: 'CONTRACT_ERROR',
       });
     });
+
+    it.each(['balanceOf', 'tokenOfOwnerByIndex', 'tokenURI'])(
+      'should throw RPC_ERROR when %s fails, keeping the cause',
+      async (name) => {
+        ownsToken42();
+        const cause = new Error('Connection timeout');
+        failContractCall(name, cause);
+
+        const thrown = await rejectionOf(verifier.getAllLicenses(WALLET_ADDRESS));
+
+        expect(thrown).toMatchObject({ code: 'RPC_ERROR' });
+        expect(thrown.details).toEqual({ name: 'Error', message: cause.message });
+      }
+    );
+
+    it('should throw CONTRACT_ERROR when the contract is paused', async () => {
+      ownsToken42();
+      mockContract.setPaused(true);
+
+      await expect(verifier.getAllLicenses(WALLET_ADDRESS)).rejects.toMatchObject({
+        code: 'CONTRACT_ERROR',
+        message: expect.stringContaining('paused'),
+      });
+    });
   });
 
   describe('getLicenseById()', () => {
@@ -216,6 +325,31 @@ describe('LicenseVerifier', () => {
 
       expect(license.owner).toBe('0xProvidedOwner');
     });
+
+    it.each(['ownerOf', 'tokenURI'])(
+      'should throw RPC_ERROR when %s fails, keeping the cause',
+      async (name) => {
+        mockContract.setOwner('99', WALLET_ADDRESS);
+        mockContract.setTokenURI('99', 'https://metadata.example.com/99');
+        const cause = new Error('Connection timeout');
+        failContractCall(name, cause);
+
+        const thrown = await rejectionOf(verifier.getLicenseById('99'));
+
+        expect(thrown).toMatchObject({ code: 'RPC_ERROR' });
+        expect(thrown.details).toEqual({ name: 'Error', message: cause.message });
+      }
+    );
+
+    it('should throw CONTRACT_ERROR when the contract is paused', async () => {
+      mockContract.setOwner('99', WALLET_ADDRESS);
+      mockContract.setTokenURI('99', 'https://metadata.example.com/99');
+      mockContract.setPaused(true);
+
+      await expect(verifier.getLicenseById('99')).rejects.toMatchObject({
+        code: 'CONTRACT_ERROR',
+      });
+    });
   });
 
   describe('fetchMetadata() — URI resolution', () => {
@@ -227,7 +361,10 @@ describe('LicenseVerifier', () => {
 
       await verifier.verifyLicense(WALLET_ADDRESS);
 
-      expect(mockFetch).toHaveBeenCalledWith('https://ipfs.io/ipfs/QmTestHash123/metadata.json', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://ipfs.io/ipfs/QmTestHash123/metadata.json',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
     });
 
     it('should resolve Arweave URI correctly', async () => {
@@ -238,7 +375,10 @@ describe('LicenseVerifier', () => {
 
       await verifier.verifyLicense(WALLET_ADDRESS);
 
-      expect(mockFetch).toHaveBeenCalledWith('https://arweave.net/ArweaveTransactionId', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://arweave.net/ArweaveTransactionId',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
     });
 
     it('should pass through HTTP URI unchanged', async () => {
@@ -249,7 +389,10 @@ describe('LicenseVerifier', () => {
 
       await verifier.verifyLicense(WALLET_ADDRESS);
 
-      expect(mockFetch).toHaveBeenCalledWith('https://api.example.com/token/1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.example.com/token/1',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
     });
 
     it('should return default metadata when fetch fails', async () => {
@@ -279,18 +422,19 @@ describe('LicenseVerifier', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => createMockMetadata({
-          attributes: [
-            { trait_type: 'version', value: '3.0' },
-            { trait_type: 'edition', value: 'founders' },
-            { trait_type: 'minted_by', value: '0xMinter' },
-            { trait_type: 'game_id', value: 'epic-game' },
-            { trait_type: 'soulbound', value: true },
-            { trait_type: 'expires_at', value: futureTimestamp },
-            { trait_type: 'tier', value: 'ultimate' },
-            { trait_type: 'cross_game_access', value: ['game-a', 'game-b'] },
-          ],
-        }),
+        json: async () =>
+          createMockMetadata({
+            attributes: [
+              { trait_type: 'version', value: '3.0' },
+              { trait_type: 'edition', value: 'founders' },
+              { trait_type: 'minted_by', value: '0xMinter' },
+              { trait_type: 'game_id', value: 'epic-game' },
+              { trait_type: 'soulbound', value: true },
+              { trait_type: 'expires_at', value: futureTimestamp },
+              { trait_type: 'tier', value: 'ultimate' },
+              { trait_type: 'cross_game_access', value: ['game-a', 'game-b'] },
+            ],
+          }),
       });
 
       const result = await verifier.verifyLicense(WALLET_ADDRESS);
@@ -314,16 +458,17 @@ describe('LicenseVerifier', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => createMockMetadata({
-          attributes: [
-            { trait_type: 'version', value: '1.0' },
-            { trait_type: 'edition', value: 'standard' },
-            { trait_type: 'mintedBy', value: '0xMinterCamel' },
-            { trait_type: 'gameId', value: 'camel-game' },
-            { trait_type: 'expiresAt', value: 9999999999 },
-            { trait_type: 'crossGameAccess', value: 'single-game' },
-          ],
-        }),
+        json: async () =>
+          createMockMetadata({
+            attributes: [
+              { trait_type: 'version', value: '1.0' },
+              { trait_type: 'edition', value: 'standard' },
+              { trait_type: 'mintedBy', value: '0xMinterCamel' },
+              { trait_type: 'gameId', value: 'camel-game' },
+              { trait_type: 'expiresAt', value: 9999999999 },
+              { trait_type: 'crossGameAccess', value: 'single-game' },
+            ],
+          }),
       });
 
       const result = await verifier.verifyLicense(WALLET_ADDRESS);
