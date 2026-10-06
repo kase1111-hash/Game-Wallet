@@ -192,11 +192,7 @@ export class GLWM {
 
     // No valid license - check portal isn't already open before opening
     if (this.mintingPortal?.isPortalOpen()) {
-      throw this.createError(
-        'USER_CANCELLED',
-        'Minting portal is already open.',
-        true
-      );
+      throw this.createError('USER_CANCELLED', 'Minting portal is already open.', true);
     }
 
     // Open minting portal
@@ -587,17 +583,30 @@ export class GLWM {
     const lower = message.toLowerCase();
 
     // User-initiated cancellations
-    if (lower.includes('user rejected') || lower.includes('user denied') || lower.includes('user cancelled')) {
+    if (
+      lower.includes('user rejected') ||
+      lower.includes('user denied') ||
+      lower.includes('user cancelled')
+    ) {
       return 'USER_CANCELLED';
     }
 
     // Contract/on-chain errors
-    if (lower.includes('contract') || lower.includes('revert') || lower.includes('execution reverted') || lower.includes('call exception')) {
+    if (
+      lower.includes('contract') ||
+      lower.includes('revert') ||
+      lower.includes('execution reverted') ||
+      lower.includes('call exception')
+    ) {
       return 'CONTRACT_ERROR';
     }
 
     // Configuration errors
-    if (lower.includes('invalid address') || lower.includes('invalid config') || lower.includes('not initialized')) {
+    if (
+      lower.includes('invalid address') ||
+      lower.includes('invalid config') ||
+      lower.includes('not initialized')
+    ) {
       return 'CONFIGURATION_ERROR';
     }
 

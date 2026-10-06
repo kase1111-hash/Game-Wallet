@@ -219,18 +219,15 @@ npm test -- --testNamePattern="should verify license"
 |------|---------|
 | `README.md` | Project overview and quick start |
 | `docs/api.md` | Complete API reference |
-| `docs/quickstart.md` | Detailed getting started guide |
-| `docs/architecture.md` | System design documentation |
-| `docs/FAQ.md` | Frequently asked questions |
-| `docs/troubleshooting.md` | Common issues and solutions |
+| `docs/quickstart.md` | Getting started guide and troubleshooting |
+| `examples/basic/` | Minimal browser example |
 | `CHANGELOG.md` | Version history |
 
 ## Questions?
 
-- Check the [FAQ](docs/FAQ.md) for common questions
+- Check the [troubleshooting section](docs/quickstart.md#troubleshooting) for common issues
 - Review existing [issues](https://github.com/kase1111-hash/Game-Wallet/issues)
 - Open a new issue for bugs or feature requests
-- See [SUPPORT.md](SUPPORT.md) for support channels
 
 ---
 

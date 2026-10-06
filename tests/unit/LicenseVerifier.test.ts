@@ -120,6 +120,20 @@ describe('LicenseVerifier', () => {
       expect(result.isValid).toBe(false);
       expect(result.reason).toBe('contract_paused');
     });
+
+    it('should detect paused when the RPC layer throws a GLWMError object', async () => {
+      // The real RPCProvider.call() wraps failures in a plain GLWMError, not an Error
+      jest.spyOn(rpcProvider, 'call').mockRejectedValue({
+        code: 'RPC_ERROR',
+        message: 'RPC call failed after 3 attempts: Execution reverted: contract is paused',
+        recoverable: true,
+      });
+
+      const result = await verifier.verifyLicense(WALLET_ADDRESS);
+
+      expect(result.isValid).toBe(false);
+      expect(result.reason).toBe('contract_paused');
+    });
   });
 
   describe('verifyLicense() — RPC failure', () => {

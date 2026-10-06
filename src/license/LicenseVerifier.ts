@@ -13,6 +13,33 @@ import { isValidAddress } from '../utils/helpers';
 
 const logger = Logger.getInstance().child('LicenseVerifier');
 
+// Shape of ERC-721 metadata JSON as served from tokenURI (all fields optional)
+interface TokenMetadataJSON {
+  name?: string;
+  description?: string;
+  image?: string;
+  attributes?: Array<{ trait_type: string; value: unknown }>;
+}
+
+/**
+ * Extract a message from an Error or a GLWMError-shaped object.
+ * RPCProvider.call() throws plain GLWMError objects, not Error instances.
+ */
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  ) {
+    return (error as { message: string }).message;
+  }
+  return 'Unknown error';
+}
+
 // Minimal ERC721 ABI for license verification
 const LICENSE_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
@@ -62,7 +89,7 @@ export class LicenseVerifier {
       // Check if the address owns any tokens
       const balance = await this.rpcProvider.call(async () => {
         const balanceOf = contract.getFunction('balanceOf');
-        return balanceOf(address);
+        return (await balanceOf(address)) as bigint;
       });
 
       if (balance === 0n) {
@@ -78,7 +105,7 @@ export class LicenseVerifier {
       // Get the first token owned by the address
       const tokenId = await this.rpcProvider.call(async () => {
         const tokenOfOwnerByIndex = contract.getFunction('tokenOfOwnerByIndex');
-        return tokenOfOwnerByIndex(address, 0);
+        return (await tokenOfOwnerByIndex(address, 0)) as bigint;
       });
 
       // Fetch license details
@@ -105,8 +132,8 @@ export class LicenseVerifier {
         blockNumber,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      const errorDetails = error instanceof Error ? error.stack : String(error);
+      const message = getErrorMessage(error);
+      const errorDetails = error instanceof Error ? error.stack : message;
 
       // Log the error for debugging
       logger.error('License verification failed', {
@@ -135,9 +162,10 @@ export class LicenseVerifier {
         blockNumber,
         reason: 'verification_failed',
         // Store error message in a way consumers can access for debugging
-        ...(process.env.NODE_ENV !== 'production' && {
-          _debug: { error: message, stack: errorDetails },
-        }),
+        ...(typeof process !== 'undefined' &&
+          process.env.NODE_ENV !== 'production' && {
+            _debug: { error: message, stack: errorDetails },
+          }),
       };
     }
   }
@@ -154,7 +182,7 @@ export class LicenseVerifier {
 
     const balance = await this.rpcProvider.call(async () => {
       const balanceOf = contract.getFunction('balanceOf');
-      return balanceOf(address);
+      return (await balanceOf(address)) as bigint;
     });
 
     // Fetch all token IDs first
@@ -162,7 +190,7 @@ export class LicenseVerifier {
     for (let i = 0n; i < balance; i++) {
       const tokenId = await this.rpcProvider.call(async () => {
         const tokenOfOwnerByIndex = contract.getFunction('tokenOfOwnerByIndex');
-        return tokenOfOwnerByIndex(address, i);
+        return (await tokenOfOwnerByIndex(address, i)) as bigint;
       });
       tokenIds.push(tokenId);
     }
@@ -190,13 +218,13 @@ export class LicenseVerifier {
       owner ??
       (await this.rpcProvider.call(async () => {
         const ownerOf = contract.getFunction('ownerOf');
-        return ownerOf(tokenId);
+        return (await ownerOf(tokenId)) as string;
       }));
 
     // Get token URI
     const tokenUri = await this.rpcProvider.call(async () => {
       const tokenURI = contract.getFunction('tokenURI');
-      return tokenURI(tokenId);
+      return (await tokenURI(tokenId)) as string;
     });
 
     // Fetch and parse metadata
@@ -230,7 +258,7 @@ export class LicenseVerifier {
         throw new Error(`Failed to fetch metadata: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as TokenMetadataJSON;
 
       return {
         name: data.name ?? 'Unknown License',
@@ -240,7 +268,7 @@ export class LicenseVerifier {
       };
     } catch (error) {
       // Log the error for debugging
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = getErrorMessage(error);
       logger.warn('Failed to fetch metadata, using defaults', {
         tokenUri,
         error: message,

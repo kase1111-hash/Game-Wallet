@@ -1,9 +1,4 @@
-import type {
-  MintingPortalConfig,
-  MintResult,
-  MintError,
-  GLWMError,
-} from '../types';
+import type { MintingPortalConfig, MintResult, MintError, GLWMError } from '../types';
 import { Logger } from '../utils/Logger';
 
 const logger = Logger.getInstance().child('MintingPortal');
@@ -110,7 +105,10 @@ export class MintingPortal {
         this.openRedirect();
         break;
       default:
-        throw this.createError('CONFIGURATION_ERROR', `Unknown portal mode: ${this.config.mode}`);
+        throw this.createError(
+          'CONFIGURATION_ERROR',
+          `Unknown portal mode: ${String(this.config.mode)}`
+        );
     }
 
     this.isOpen = true;
@@ -166,7 +164,7 @@ export class MintingPortal {
   /**
    * Open portal as iframe
    */
-  private async openIframe(): Promise<void> {
+  private openIframe(): Promise<void> {
     if (typeof document === 'undefined') {
       throw this.createError(
         'CONFIGURATION_ERROR',
@@ -245,6 +243,8 @@ export class MintingPortal {
         this.close();
       }
     };
+
+    return Promise.resolve();
   }
 
   /**
