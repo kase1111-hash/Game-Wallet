@@ -83,6 +83,11 @@ export class GLWM {
     this.setState({ status: 'initializing' });
 
     try {
+      // Release components from a previous initialize(), so their wallet listeners and
+      // portal callbacks stop firing into this instance
+      await this.walletConnector?.disconnect();
+      this.mintingPortal?.close();
+
       // Initialize cache
       this.cache = new Cache(this.config.cacheConfig ?? DEFAULT_CACHE_CONFIG);
 

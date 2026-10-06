@@ -93,6 +93,8 @@ export class WalletConnector {
   private expectedChainId: ChainId;
   private browserProvider: BrowserProvider | null = null;
   private eventHandlers: Map<string, (...args: unknown[]) => void> = new Map();
+  // The provider object the event handlers are attached to (window.ethereum may be replaced)
+  private listenedProvider: EthereumProvider | null = null;
   private onSessionChange?: (session: WalletSession) => void;
   private onChainMismatch?: (currentChain: ChainId, expectedChain: ChainId) => void;
 
@@ -356,6 +358,9 @@ export class WalletConnector {
    * Set up wallet event listeners
    */
   private setupEventListeners(provider: EthereumProvider): void {
+    // Connecting again must not leave the previous connection's handlers attached
+    this.removeEventListeners();
+
     const handleAccountsChanged = (accounts: unknown): void => {
       const accountList = accounts as string[];
       if (accountList.length === 0) {
@@ -397,27 +402,24 @@ export class WalletConnector {
     this.eventHandlers.set('accountsChanged', handleAccountsChanged);
     this.eventHandlers.set('chainChanged', handleChainChanged);
     this.eventHandlers.set('disconnect', handleDisconnect);
+    this.listenedProvider = provider;
   }
 
   /**
    * Remove wallet event listeners
    */
   private removeEventListeners(): void {
-    const provider = this.session.connection?.provider;
+    const provider = this.listenedProvider;
     if (!provider) {
       return;
     }
 
-    const ethereumProvider = this.getEthereumProvider(provider);
-    if (!ethereumProvider) {
-      return;
-    }
-
     for (const [event, handler] of this.eventHandlers) {
-      ethereumProvider.removeListener(event, handler);
+      provider.removeListener(event, handler);
     }
 
     this.eventHandlers.clear();
+    this.listenedProvider = null;
   }
 
   /**
