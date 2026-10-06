@@ -50,6 +50,24 @@ function isMintError(payload: unknown): payload is MintError {
 }
 
 /**
+ * Normalize an error reported by the portal (untrusted postMessage data) to a well-formed
+ * MintError: the documented MINT_FAILED payload has no `recoverable`, and MINT_COMPLETED's
+ * `error` is not validated by isMintResult.
+ */
+function toMintError(raw: unknown): MintError {
+  if (isMintError(raw)) {
+    const recoverable = (raw as { recoverable?: unknown }).recoverable;
+    return { ...raw, recoverable: typeof recoverable === 'boolean' ? recoverable : true };
+  }
+  return {
+    code: 'MINT_FAILED',
+    message: typeof raw === 'string' && raw !== '' ? raw : 'Mint failed',
+    recoverable: true,
+    details: raw,
+  };
+}
+
+/**
  * Controls the minting portal iframe/redirect
  *
  * Supported modes:
@@ -300,7 +318,10 @@ export class MintingPortal {
 
       case 'MINT_COMPLETED':
         if (isMintResult(message.payload)) {
-          this.onMintCompleted?.(message.payload);
+          const result = message.payload;
+          this.onMintCompleted?.(
+            result.error === undefined ? result : { ...result, error: toMintError(result.error) }
+          );
           if (this.config.autoCloseOnMint !== false) {
             this.close();
           }
@@ -311,7 +332,7 @@ export class MintingPortal {
         if (isMintError(message.payload)) {
           this.onMintCompleted?.({
             success: false,
-            error: message.payload,
+            error: toMintError(message.payload),
           });
         }
         break;

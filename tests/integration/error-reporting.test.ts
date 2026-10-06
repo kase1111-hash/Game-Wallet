@@ -281,18 +281,84 @@ describe('onError reporting', () => {
       window.dispatchEvent(
         new MessageEvent('message', {
           origin: PORTAL_URL,
+          // The payload shape documented in docs/quickstart.md (no `recoverable`)
           data: {
             type: 'MINT_FAILED',
-            payload: { code: 'MINT_FAILED', message: 'Transaction reverted', recoverable: true },
+            payload: { code: 'MINT_FAILED', message: 'Transaction reverted' },
           },
         })
       );
 
       expectReportedOnce('MINT_FAILED');
+      expect(onError).toHaveBeenCalledWith({
+        code: 'MINT_FAILED',
+        message: 'Transaction reverted',
+        recoverable: true,
+      });
       // The existing event still fires with the failed result
       expect(mintCompleted).toHaveBeenCalledWith(
         expect.objectContaining({ result: expect.objectContaining({ success: false }) })
       );
+    });
+
+    it('minting portal reports MINT_COMPLETED with a malformed error', async () => {
+      setupMockWallet();
+      createSdk();
+      await sdk.initialize();
+      await sdk.connectWallet('metamask');
+      const portalClosed = jest.fn();
+      sdk.on('CLOSE_MINTING_PORTAL', portalClosed);
+      await sdk.openMintingPortal();
+
+      // Portal messages are untrusted input: `error` here is a string, not a MintError
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: PORTAL_URL,
+          data: {
+            type: 'MINT_COMPLETED',
+            payload: { success: false, error: 'insufficient funds' },
+          },
+        })
+      );
+
+      expectReportedOnce('MINT_FAILED');
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'insufficient funds', recoverable: true })
+      );
+      // The portal still auto-closes, so a waiting verifyAndPlay() can continue
+      expect(portalClosed).toHaveBeenCalledTimes(1);
+      expect(document.getElementById('glwm-portal-overlay')).toBeNull();
+    });
+
+    it('a plain Error thrown inside a reporting site (app callback)', async () => {
+      setupMockWallet();
+      const appBug = new Error('bug in onLicenseVerified');
+      const { statusAtCall } = createSdk({
+        onLicenseVerified: () => {
+          throw appBug;
+        },
+      });
+      await sdk.initialize();
+      await sdk.connectWallet('metamask');
+
+      const thrown = await sdk.verifyLicense().catch((error: GLWMError) => error);
+
+      expect(thrown).toMatchObject({ code: 'NETWORK_ERROR', message: 'bug in onLicenseVerified' });
+      expect(thrown.details).toBe(appBug); // original error (and its stack) kept
+      expectReportedOnce('NETWORK_ERROR');
+      expect(onError.mock.calls[0]?.[0]).toBe(thrown);
+      expect(statusAtCall).toEqual(['error']);
+    });
+
+    it('a non-GLWMError from a component keeps its message (cross-realm TypeError)', async () => {
+      createSdk({ mintingPortal: { url: 'not a url', mode: 'iframe' } });
+      await sdk.initialize();
+
+      const thrown = await sdk.openMintingPortal().catch((error: GLWMError) => error);
+
+      expect(thrown.message).toMatch(/invalid url/i);
+      expectReportedOnce(thrown.code);
+      expect(onError.mock.calls[0]?.[0]).toBe(thrown);
     });
   });
 
@@ -349,6 +415,20 @@ describe('onError reporting', () => {
   });
 
   describe('callback robustness', () => {
+    it('a throwing state listener does not prevent onError or the ERROR event', async () => {
+      mockState.getBlockNumber.mockRejectedValue(rpcDown());
+      createSdk();
+      sdk.subscribe((state) => {
+        if (state.status === 'error') {
+          throw new Error('bug in a state listener');
+        }
+      });
+
+      await sdk.initialize().catch(() => undefined);
+
+      expectReportedOnce('RPC_ERROR');
+    });
+
     it('an onError that throws does not replace the SDK error or skip the error state', async () => {
       mockState.getBlockNumber.mockRejectedValue(rpcDown());
       createSdk();
@@ -364,6 +444,34 @@ describe('onError reporting', () => {
   });
 
   describe("'ERROR' event", () => {
+    it('fires before onError', async () => {
+      mockState.getBlockNumber.mockRejectedValue(rpcDown());
+      createSdk();
+      const order: string[] = [];
+      onError.mockImplementation(() => {
+        order.push('onError');
+      });
+      sdk.on('ERROR', () => order.push('ERROR event'));
+
+      await expect(sdk.initialize()).rejects.toMatchObject({ code: 'RPC_ERROR' });
+
+      expect(order).toEqual(['ERROR event', 'onError']);
+    });
+
+    it('a handler subscribed during dispatch does not receive the in-flight error', async () => {
+      mockState.getBlockNumber.mockRejectedValue(rpcDown());
+      createSdk();
+      const lateHandler = jest.fn();
+      sdk.on('ERROR', () => {
+        sdk.on('ERROR', lateHandler);
+      });
+
+      await expect(sdk.initialize()).rejects.toMatchObject({ code: 'RPC_ERROR' });
+
+      expectReportedOnce('RPC_ERROR');
+      expect(lateHandler).not.toHaveBeenCalled();
+    });
+
     it('fires when no onError callback is configured', async () => {
       mockState.getBlockNumber.mockRejectedValue(rpcDown());
       sdk = new GLWM(createConfig());

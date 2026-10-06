@@ -119,9 +119,12 @@ export class GLWM {
           this.emitEvent({ type: 'MINT_STARTED', transactionHash: txHash });
         },
         onMintCompleted: (result) => {
-          this.emitEvent({ type: 'MINT_COMPLETED', result });
-          if (!result.success && result.error) {
-            this.reportError(result.error);
+          try {
+            this.emitEvent({ type: 'MINT_COMPLETED', result });
+          } finally {
+            if (!result.success && result.error) {
+              this.reportError(result.error);
+            }
           }
         },
         onClose: () => {
@@ -132,8 +135,12 @@ export class GLWM {
       this.setState({ status: 'awaiting_wallet' });
     } catch (error) {
       const glwmError = this.handleError(error);
-      this.setState({ status: 'error', error: glwmError });
-      throw this.reportError(glwmError);
+      try {
+        this.setState({ status: 'error', error: glwmError });
+      } finally {
+        this.reportError(glwmError);
+      }
+      throw glwmError;
     }
   }
 
@@ -241,8 +248,12 @@ export class GLWM {
       return connection;
     } catch (error) {
       const glwmError = this.handleError(error);
-      this.setState({ status: 'error', error: glwmError });
-      throw this.reportError(glwmError);
+      try {
+        this.setState({ status: 'error', error: glwmError });
+      } finally {
+        this.reportError(glwmError);
+      }
+      throw glwmError;
     }
   }
 
@@ -358,8 +369,12 @@ export class GLWM {
       return result;
     } catch (error) {
       const glwmError = this.handleError(error);
-      this.setState({ status: 'error', error: glwmError });
-      throw this.reportError(glwmError);
+      try {
+        this.setState({ status: 'error', error: glwmError });
+      } finally {
+        this.reportError(glwmError);
+      }
+      throw glwmError;
     }
   }
 
@@ -579,7 +594,8 @@ export class GLWM {
     this.reportedErrors.add(error);
 
     const event: GLWMEvent = { type: 'ERROR', error };
-    for (const handler of this.eventHandlers.get('ERROR') ?? []) {
+    // Snapshot: handlers (un)subscribed during dispatch don't affect this error
+    for (const handler of [...(this.eventHandlers.get('ERROR') ?? [])]) {
       this.runErrorListener('ERROR event handler', () => handler(event));
     }
     this.runErrorListener('onError callback', () => this.config.onError?.(error));
@@ -591,7 +607,10 @@ export class GLWM {
       listener();
     } catch (listenerError) {
       logger.error(`${name} threw`, {
-        error: listenerError instanceof Error ? listenerError.message : String(listenerError),
+        error:
+          listenerError instanceof Error
+            ? (listenerError.stack ?? listenerError.message)
+            : String(listenerError),
       });
     }
   }
@@ -616,12 +635,14 @@ export class GLWM {
       return error;
     }
 
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    // Duck-typed so errors from another realm (iframes, jsdom) keep their message
+    const rawMessage = (error as { message?: unknown } | null)?.message;
+    const message = typeof rawMessage === 'string' ? rawMessage : 'Unknown error';
     logger.error('Unhandled error', { error: message });
 
-    // Classify the error based on message content
+    // Classify the error based on message content; keep the original for its stack
     const code = this.classifyError(message);
-    return { code, message, recoverable: true };
+    return { code, message, recoverable: true, details: error };
   }
 
   private classifyError(message: string): GLWMError['code'] {
