@@ -192,14 +192,11 @@ describe('onError reporting', () => {
       createSdk();
       await sdk.initialize();
 
-      // WalletConnector currently re-wraps WALLET_NOT_FOUND as NETWORK_ERROR (see
-      // WalletConnector.test.ts), so assert onError gets exactly the error that was thrown
       const thrown = await sdk.connectWallet().catch((error: GLWMError) => error);
 
-      expect(onError).toHaveBeenCalledTimes(1);
+      expect(thrown).toMatchObject({ code: 'WALLET_NOT_FOUND' });
+      expectReportedOnce('WALLET_NOT_FOUND');
       expect(onError.mock.calls[0]?.[0]).toBe(thrown);
-      expect(errorEvents).toHaveBeenCalledTimes(1);
-      expect(errorEvents.mock.calls[0]?.[0].error).toBe(thrown);
     });
 
     it('verifyLicense(): RPC failure during verification', async () => {

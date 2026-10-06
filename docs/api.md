@@ -215,7 +215,7 @@ interface GLWMError {
 
 | Code | Recoverable | Description |
 |------|:-----------:|-------------|
-| `WALLET_NOT_FOUND` | yes | Wallet provider not detected |
+| `WALLET_NOT_FOUND` | no | Wallet provider not detected |
 | `WALLET_CONNECTION_REJECTED` | yes | User rejected connection |
 | `WALLET_DISCONNECTED` | yes | Wallet disconnected unexpectedly |
 | `CHAIN_MISMATCH` | yes | Wrong chain, needs switch |

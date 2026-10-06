@@ -117,19 +117,59 @@ describe('WalletConnector', () => {
       });
     });
 
-    it('should throw when no provider is installed', async () => {
-      // No window.ethereum set up — internally throws WALLET_NOT_FOUND
-      // which gets re-wrapped by handleConnectionError as NETWORK_ERROR
-      // since it doesn't recognize the WalletError shape (string code vs number)
+    it('should throw WALLET_NOT_FOUND when no provider is installed', async () => {
+      connector = new WalletConnector(137);
+
+      await expect(connector.connect('metamask')).rejects.toMatchObject({
+        code: 'WALLET_NOT_FOUND',
+        message: expect.stringContaining('not found'),
+        recoverable: false,
+        provider: 'metamask',
+      });
+
+      const session = connector.getSession();
+      expect(session.isConnected).toBe(false);
+      expect(session.error).toMatchObject({ code: 'WALLET_NOT_FOUND' });
+    });
+
+    it('should throw WALLET_CONNECTION_REJECTED when the wallet returns no accounts', async () => {
+      const mockProvider = setupMetaMask();
+      mockProvider.setAccounts([]);
+
+      connector = new WalletConnector(137);
+
+      await expect(connector.connect('metamask')).rejects.toMatchObject({
+        code: 'WALLET_CONNECTION_REJECTED',
+        recoverable: true,
+      });
+    });
+
+    it('should wrap an unrecognized provider error code as NETWORK_ERROR', async () => {
+      const mockProvider = setupMetaMask();
+      jest
+        .spyOn(mockProvider, 'request')
+        .mockRejectedValue({ code: -32603, message: 'Internal JSON-RPC error' });
+
+      connector = new WalletConnector(137);
+
+      await expect(connector.connect('metamask')).rejects.toMatchObject({
+        code: 'NETWORK_ERROR',
+        message: 'Internal JSON-RPC error',
+      });
+    });
+
+    it('should wrap a provider error with a string code as NETWORK_ERROR', async () => {
+      // Some wallets use string codes; only the connector's own errors pass through as-is
+      const mockProvider = setupMetaMask();
+      jest
+        .spyOn(mockProvider, 'request')
+        .mockRejectedValue({ code: 'UNKNOWN_ERROR', message: 'Something went wrong' });
+
       connector = new WalletConnector(137);
 
       await expect(connector.connect('metamask')).rejects.toMatchObject({
         code: 'NETWORK_ERROR',
       });
-
-      const session = connector.getSession();
-      expect(session.isConnected).toBe(false);
-      expect(session.error).not.toBeNull();
     });
   });
 
