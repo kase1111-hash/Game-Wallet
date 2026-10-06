@@ -23,6 +23,20 @@ const logger = Logger.getInstance().child('GLWM');
 type StateListener = (state: GLWMState) => void;
 type EventHandler<T extends GLWMEvent['type']> = (payload: Extract<GLWMEvent, { type: T }>) => void;
 
+/** The states that exist only while the minting portal is open (see syncMintingState()) */
+type MintingState = Extract<GLWMState, { status: 'minting_portal_open' | 'minting_in_progress' }>;
+/** Every other state: the only ones setState() accepts */
+type NonMintingState = Exclude<GLWMState, MintingState>;
+
+function isMintingState(state: GLWMState): state is MintingState {
+  return state.status === 'minting_portal_open' || state.status === 'minting_in_progress';
+}
+
+/** An error's stack (or message) for log output */
+function describeError(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}
+
 const DEFAULT_CACHE_CONFIG: CacheConfig = {
   enabled: true,
   ttlSeconds: 300, // 5 minutes
@@ -58,6 +72,12 @@ export class GLWM {
   private mintingPortal: MintingPortal | null = null;
   private cache: Cache | null = null;
 
+  // Errors already reported (ERROR event + config.onError), so each is reported exactly once
+  private readonly reportedErrors = new WeakSet<GLWMError>();
+
+  // An openMintingPortal() still in progress, shared by concurrent calls (e.g. a double-click)
+  private portalOpening: Promise<void> | null = null;
+
   private static readonly VERSION = '0.1.0';
 
   constructor(config: GLWMConfig) {
@@ -80,6 +100,22 @@ export class GLWM {
     this.setState({ status: 'initializing' });
 
     try {
+      // Release components from a previous initialize(), so their wallet listeners and portal
+      // callbacks stop firing into this instance. They are detached first, and a failure while
+      // releasing them (e.g. an app handler throwing on WALLET_DISCONNECTED) is logged rather
+      // than failing this initialize().
+      const previousConnector = this.walletConnector;
+      const previousPortal = this.mintingPortal;
+      this.walletConnector = null;
+      this.mintingPortal = null;
+      await this.releaseQuietly('wallet connector', async () => {
+        // Listeners are attached only together with a connection
+        if (previousConnector?.getSession().connection) {
+          await previousConnector.disconnect();
+        }
+      });
+      await this.releaseQuietly('minting portal', () => previousPortal?.close());
+
       // Initialize cache
       this.cache = new Cache(this.config.cacheConfig ?? DEFAULT_CACHE_CONFIG);
 
@@ -98,11 +134,10 @@ export class GLWM {
           }
         },
         onChainMismatch: (current, expected) => {
-          const error = this.createError(
+          this.createError(
             'CHAIN_MISMATCH',
             `Connected to chain ${current}, but expected ${expected}`
           );
-          this.config.onError?.(error);
         },
       });
 
@@ -110,24 +145,41 @@ export class GLWM {
       this.licenseVerifier = new LicenseVerifier(this.rpcProvider, this.config.licenseContract);
       this.licenseVerifier.initialize();
 
-      // Initialize minting portal
+      // Initialize minting portal. Its lifecycle callbacks drive the minting states, through
+      // syncMintingState() only.
       this.mintingPortal = new MintingPortal(this.config.mintingPortal, {
-        onMintStarted: (txHash) => {
-          this.setState({ status: 'minting_in_progress', transactionHash: txHash });
+        onMintStarted: (txHash): void => {
+          this.syncMintingState({ status: 'minting_in_progress', transactionHash: txHash });
           this.emitEvent({ type: 'MINT_STARTED', transactionHash: txHash });
         },
         onMintCompleted: (result) => {
-          this.emitEvent({ type: 'MINT_COMPLETED', result });
+          try {
+            this.emitEvent({ type: 'MINT_COMPLETED', result });
+          } finally {
+            if (!result.success && result.error) {
+              this.reportError(result.error);
+            }
+          }
         },
-        onClose: () => {
-          this.emitEvent({ type: 'CLOSE_MINTING_PORTAL' });
+        onClose: (): void => {
+          // CLOSE_MINTING_PORTAL ends verifyAndPlay()'s wait, so it fires even if a state
+          // listener throws
+          try {
+            this.syncMintingState();
+          } finally {
+            this.emitEvent({ type: 'CLOSE_MINTING_PORTAL' });
+          }
         },
       });
 
       this.setState({ status: 'awaiting_wallet' });
     } catch (error) {
       const glwmError = this.handleError(error);
-      this.setState({ status: 'error', error: glwmError });
+      try {
+        this.setState({ status: 'error', error: glwmError });
+      } finally {
+        this.reportError(glwmError);
+      }
       throw glwmError;
     }
   }
@@ -162,11 +214,9 @@ export class GLWM {
   async verifyAndPlay(): Promise<LicenseVerificationResult> {
     this.ensureInitialized();
 
-    // Check if minting is already in progress
-    if (
-      this.state.status === 'minting_portal_open' ||
-      this.state.status === 'minting_in_progress'
-    ) {
+    // Check if minting is already in progress (a minting state implies the portal is open; see
+    // syncMintingState())
+    if (isMintingState(this.state)) {
       throw this.createError(
         'USER_CANCELLED',
         'Minting is already in progress. Please complete or close the current minting session.',
@@ -227,18 +277,38 @@ export class GLWM {
     const provider = preferredProvider ?? 'metamask';
     this.setState({ status: 'connecting_wallet', provider });
 
+    const connector = this.walletConnector!;
+    let connection: WalletConnection;
     try {
-      const connection = await this.walletConnector!.connect(preferredProvider);
-
-      // Set wallet address in minting portal
-      this.mintingPortal?.setWalletAddress(connection.address);
-
-      return connection;
+      connection = await connector.connect(preferredProvider);
     } catch (error) {
       const glwmError = this.handleError(error);
-      this.setState({ status: 'error', error: glwmError });
+      if (connector !== this.walletConnector) {
+        // initialize() ran meanwhile: its state is not this connection attempt's to change
+        throw this.reportError(glwmError);
+      }
+      try {
+        this.setState({ status: 'error', error: glwmError });
+      } finally {
+        this.reportError(glwmError);
+      }
       throw glwmError;
     }
+
+    if (connector !== this.walletConnector) {
+      // initialize() replaced the connector while connecting: release this connection rather
+      // than leave its wallet listeners attached
+      await connector.disconnect();
+      throw this.createError(
+        'WALLET_DISCONNECTED',
+        'initialize() was called while the wallet was connecting. Connect again.'
+      );
+    }
+
+    // Set wallet address in minting portal
+    this.mintingPortal?.setWalletAddress(connection.address);
+
+    return connection;
   }
 
   /**
@@ -305,7 +375,7 @@ export class GLWM {
    */
   async switchChain(chainId: ChainId): Promise<void> {
     this.ensureInitialized();
-    await this.walletConnector!.switchChain(chainId);
+    await this.withErrorReporting(() => this.walletConnector!.switchChain(chainId));
   }
 
   // ============================================
@@ -353,7 +423,11 @@ export class GLWM {
       return result;
     } catch (error) {
       const glwmError = this.handleError(error);
-      this.setState({ status: 'error', error: glwmError });
+      try {
+        this.setState({ status: 'error', error: glwmError });
+      } finally {
+        this.reportError(glwmError);
+      }
       throw glwmError;
     }
   }
@@ -374,7 +448,7 @@ export class GLWM {
    */
   async checkLicenseForAddress(address: string): Promise<LicenseVerificationResult> {
     this.ensureInitialized();
-    return this.licenseVerifier!.verifyLicense(address);
+    return this.withErrorReporting(() => this.licenseVerifier!.verifyLicense(address));
   }
 
   /**
@@ -382,7 +456,7 @@ export class GLWM {
    */
   async getLicenseDetails(tokenId: string): Promise<LicenseNFT> {
     this.ensureInitialized();
-    return this.licenseVerifier!.getLicenseById(tokenId);
+    return this.withErrorReporting(() => this.licenseVerifier!.getLicenseById(tokenId));
   }
 
   /**
@@ -397,7 +471,8 @@ export class GLWM {
       throw this.createError('WALLET_DISCONNECTED', 'No wallet connected');
     }
 
-    return this.licenseVerifier!.getAllLicenses(session.connection.address);
+    const address = session.connection.address;
+    return this.withErrorReporting(() => this.licenseVerifier!.getAllLicenses(address));
   }
 
   // ============================================
@@ -406,28 +481,62 @@ export class GLWM {
 
   /**
    * Open the minting portal
+   *
+   * Once the portal is open, the state becomes 'minting_portal_open' and OPEN_MINTING_PORTAL is
+   * emitted. If the portal cannot open, the state is left unchanged and the error is reported and
+   * thrown. Does nothing if the portal is already open.
    */
   async openMintingPortal(): Promise<void> {
     this.ensureInitialized();
 
-    this.setState({ status: 'minting_portal_open' });
-    this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
+    // A second call while the first is still opening waits for it: MintingPortal.open() is not
+    // re-entrant, and two concurrent opens would stack a second, orphaned overlay
+    this.portalOpening ??= this.openPortalOnce().finally(() => {
+      this.portalOpening = null;
+    });
+    return this.portalOpening;
+  }
 
-    await this.mintingPortal!.open();
+  private async openPortalOnce(): Promise<void> {
+    const portal = this.mintingPortal;
+    if (!portal) {
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        'SDK not initialized. Call initialize() first.'
+      );
+    }
+    if (portal.isPortalOpen()) {
+      return;
+    }
+
+    await this.withErrorReporting(() => portal.open());
+
+    if (portal !== this.mintingPortal) {
+      // initialize() or dispose() replaced the portal while it was opening: don't leave it on screen
+      portal.close();
+      return;
+    }
+
+    // Announced outside the error reporting: an exception from an app's state listener or
+    // OPEN_MINTING_PORTAL handler is not a failure to open the portal
+    if (portal.isPortalOpen()) {
+      this.syncMintingState();
+      // A state listener may already have closed the portal again
+      if (portal.isPortalOpen()) {
+        this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
+      }
+    }
   }
 
   /**
    * Close the minting portal
+   *
+   * As with every other way the portal closes, the SDK then leaves the minting state: to
+   * 'no_license' if a wallet is connected, else 'awaiting_wallet'. Does nothing if the portal is
+   * not open.
    */
   closeMintingPortal(): void {
     this.mintingPortal?.close();
-
-    const session = this.getWalletSession();
-    if (session.connection) {
-      this.setState({ status: 'no_license', address: session.connection.address });
-    } else {
-      this.setState({ status: 'awaiting_wallet' });
-    }
   }
 
   // ============================================
@@ -529,6 +638,13 @@ export class GLWM {
         'SDK not initialized. Call initialize() first.'
       );
     }
+    if (this.state.status === 'initializing') {
+      // The components are being (re)created: using them now would act on a half-built SDK
+      throw this.createError(
+        'CONFIGURATION_ERROR',
+        'SDK is still initializing. Wait for initialize() to finish.'
+      );
+    }
     if (this.state.status === 'error') {
       const errorState = this.state as { status: 'error'; error: GLWMError };
       throw this.createError(
@@ -538,11 +654,64 @@ export class GLWM {
     }
   }
 
-  private setState(newState: GLWMState): void {
+  /**
+   * Set a state that is not a minting state. Minting states are entered and left only by
+   * syncMintingState(), so they are not accepted here.
+   */
+  private setState(newState: NonMintingState): void {
+    this.commitState(newState);
+  }
+
+  /**
+   * Store the state and notify listeners. Called only by setState() and syncMintingState().
+   */
+  private commitState(newState: GLWMState): void {
     logger.debug(`State: ${this.state.status} → ${newState.status}`);
     this.state = newState;
     for (const listener of this.stateListeners) {
       listener(this.state);
+    }
+  }
+
+  /**
+   * Minting-state invariant: the SDK is in a minting state ('minting_portal_open' or
+   * 'minting_in_progress') only while the minting portal is open, and the portal opening puts
+   * it in one.
+   *
+   * This is the only place a minting state is entered or left (setState() does not accept
+   * them). It runs once the portal has opened (openMintingPortal()) and from the portal's
+   * onMintStarted / onClose callbacks, and reads the portal's actual open status. Every close
+   * path goes through MintingPortal.close() and so through onClose: the close button, an overlay
+   * click, PORTAL_CLOSED, auto-close after MINT_COMPLETED, the verifyAndPlay() timeout,
+   * closeMintingPortal(), dispose() and initialize(). A portal that fails to open is never
+   * announced, so the state is left as it was.
+   *
+   * It changes the state only when the state and the portal disagree, or when `next` moves an
+   * open portal's session forward, so no transition is notified twice.
+   *
+   * Public calls made while the portal is open (verifyLicense(), connectWallet(),
+   * disconnectWallet()) can still move the state off a minting state; verifyAndPlay() covers
+   * that case by checking isPortalOpen().
+   *
+   * @param next - The minting state to enter while the portal is open. Without it, an open
+   *   portal enters 'minting_portal_open' unless already in a minting state.
+   */
+  private syncMintingState(next?: MintingState): void {
+    const portalOpen = this.mintingPortal?.isPortalOpen() === true;
+
+    if (portalOpen) {
+      if (next) {
+        this.commitState(next);
+      } else if (!isMintingState(this.state)) {
+        this.commitState({ status: 'minting_portal_open' });
+      }
+    } else if (isMintingState(this.state)) {
+      const connection = this.getWalletSession().connection;
+      this.setState(
+        connection
+          ? { status: 'no_license', address: connection.address }
+          : { status: 'awaiting_wallet' }
+      );
     }
   }
 
@@ -555,28 +724,77 @@ export class GLWM {
     }
   }
 
+  /**
+   * Create an error and report it (ERROR event + config.onError)
+   */
   private createError(code: GLWMError['code'], message: string, recoverable = true): GLWMError {
-    const error: GLWMError = {
-      code,
-      message,
-      recoverable,
-    };
-    this.config.onError?.(error);
+    return this.reportError({ code, message, recoverable });
+  }
+
+  /**
+   * Emit the ERROR event and call config.onError, once per error object. A throwing listener
+   * is logged rather than allowed to replace the SDK error or interrupt its state handling.
+   */
+  private reportError<E extends GLWMError>(error: E): E {
+    if (this.reportedErrors.has(error)) {
+      return error;
+    }
+    this.reportedErrors.add(error);
+
+    const event: GLWMEvent = { type: 'ERROR', error };
+    // Snapshot: handlers (un)subscribed during dispatch don't affect this error
+    for (const handler of [...(this.eventHandlers.get('ERROR') ?? [])]) {
+      this.runErrorListener('ERROR event handler', () => handler(event));
+    }
+    this.runErrorListener('onError callback', () => this.config.onError?.(error));
     return error;
   }
 
+  private runErrorListener(name: string, listener: () => void): void {
+    try {
+      listener();
+    } catch (listenerError) {
+      logger.error(`${name} threw`, { error: describeError(listenerError) });
+    }
+  }
+
+  /** Release a component from a previous initialize(), logging instead of throwing */
+  private async releaseQuietly(name: string, release: () => void | Promise<void>): Promise<void> {
+    try {
+      await release();
+    } catch (releaseError) {
+      logger.error(`Releasing the previous ${name} threw`, { error: describeError(releaseError) });
+    }
+  }
+
+  /**
+   * Run an operation and report any error it throws before rethrowing it as a GLWMError
+   */
+  private async withErrorReporting<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      throw this.reportError(this.handleError(error));
+    }
+  }
+
+  /**
+   * Normalize a thrown value to a GLWMError (without reporting it)
+   */
   private handleError(error: unknown): GLWMError {
     if (this.isGLWMError(error)) {
       logger.error(`${error.code}: ${error.message}`);
       return error;
     }
 
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    // Duck-typed so errors from another realm (iframes, jsdom) keep their message
+    const rawMessage = (error as { message?: unknown } | null)?.message;
+    const message = typeof rawMessage === 'string' ? rawMessage : 'Unknown error';
     logger.error('Unhandled error', { error: message });
 
-    // Classify the error based on message content
+    // Classify the error based on message content; keep the original for its stack
     const code = this.classifyError(message);
-    return this.createError(code, message);
+    return { code, message, recoverable: true, details: error };
   }
 
   private classifyError(message: string): GLWMError['code'] {
@@ -630,7 +848,16 @@ export class GLWM {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         unsubscribe();
-        this.mintingPortal?.close();
+        try {
+          // Closing the portal also leaves the minting state (see syncMintingState())
+          this.mintingPortal?.close();
+        } catch (closeError) {
+          // An app listener threw during the close: still reject below, or the caller would
+          // wait forever (this wait no longer listens for CLOSE_MINTING_PORTAL)
+          logger.error('Closing the timed-out minting portal threw', {
+            error: describeError(closeError),
+          });
+        }
         reject(this.createError('USER_CANCELLED', 'Minting portal timed out after 10 minutes'));
       }, GLWM.PORTAL_TIMEOUT_MS);
 

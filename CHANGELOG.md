@@ -16,6 +16,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README replaced with focused developer README (~3KB, down from 97KB)
 - `docs/quickstart.md` rewritten with accurate API and troubleshooting
 - `docs/api.md` rewritten with accurate types matching actual source code
+- When the minting portal closes, `CLOSE_MINTING_PORTAL` now fires before
+  `mintingPortal.onClose` (it used to fire after), and `MintingPortal` runs its owner's `onClose`
+  callback before `config.onClose`
+- `closeMintingPortal()` no longer resets a non-minting state such as `license_valid` or `error`
+  (call `initialize()` to recover from `error`)
+
+### Fixed
+- `onError` is now called for every error the SDK surfaces, exactly once, with the error that is
+  thrown. It used to miss every error from a component (`initialize()`, `connectWallet()` and
+  `verifyLicense()` failures, `switchChain()`, `checkLicenseForAddress()`, `getLicenseDetails()`,
+  `getAllLicenses()`, `openMintingPortal()`, portal `MINT_FAILED`) and fired twice on a chain
+  mismatch. The documented `ERROR` event is now emitted alongside it. A throwing `onError` or
+  `ERROR` handler is logged instead of replacing the SDK's error
+- `connectWallet()` reports `WALLET_NOT_FOUND` when no wallet is installed and
+  `WALLET_CONNECTION_REJECTED` when the wallet returns no accounts (both were `NETWORK_ERROR`)
+- A malformed error from the minting portal (e.g. a string in `MINT_COMPLETED`) no longer breaks
+  mint-failure handling and leaves the portal open; portal errors are normalized, and the
+  documented `MINT_FAILED` payload gets `recoverable: true`
+- Calling `initialize()` again now releases the previous session: it disconnects a connected
+  wallet (`WALLET_DISCONNECTED` fires), removes the old wallet listeners and closes an open minting
+  portal, so their events are no longer handled twice. `connectWallet()` while already connected no
+  longer attaches a second set of wallet listeners
+- Calls made while `initialize()` is running are rejected with `CONFIGURATION_ERROR` ("SDK is
+  still initializing") instead of failing with internal errors
+- The SDK no longer stays in `minting_portal_open` / `minting_in_progress` after the minting
+  portal fails to open or closes on its own (close button, overlay click, `PORTAL_CLOSED`,
+  auto-close after a mint, the `verifyAndPlay()` timeout), which made every later
+  `verifyAndPlay()` throw "Minting is already in progress". A minting state is now reported only
+  while the portal is open: `minting_portal_open` and `OPEN_MINTING_PORTAL` come after the portal
+  opens (not before, and not at all if it fails to open), and a close that finds the SDK in a
+  minting state moves it to `no_license` (wallet connected) or `awaiting_wallet`, before
+  `mintingPortal.onClose` runs
+- `openMintingPortal()` while the portal is already open (or still opening, e.g. a double-click)
+  no longer resets `minting_in_progress`, emits a second `OPEN_MINTING_PORTAL`, or stacks a second
+  portal overlay; `closeMintingPortal()` with no portal open no longer changes the state
 
 ### Removed
 - Unused utilities: `Metrics.ts`, `ErrorReporter.ts`, `Config.ts` and their tests

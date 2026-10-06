@@ -26,6 +26,20 @@ function isEIP1193Error(error: unknown): error is { code: number; message: strin
 }
 
 /**
+ * Type guard for a WalletError this connector created itself (string code plus a
+ * recoverable flag), as opposed to a raw provider error
+ */
+function isWalletError(error: unknown): error is WalletError {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { code: unknown }).code === 'string' &&
+    typeof (error as { message: unknown }).message === 'string' &&
+    typeof (error as { recoverable: unknown }).recoverable === 'boolean'
+  );
+}
+
+/**
  * Safely extract error code from unknown error
  */
 function getErrorCode(error: unknown): number | undefined {
@@ -79,6 +93,8 @@ export class WalletConnector {
   private expectedChainId: ChainId;
   private browserProvider: BrowserProvider | null = null;
   private eventHandlers: Map<string, (...args: unknown[]) => void> = new Map();
+  // The provider object the event handlers are attached to (window.ethereum may be replaced)
+  private listenedProvider: EthereumProvider | null = null;
   private onSessionChange?: (session: WalletSession) => void;
   private onChainMismatch?: (currentChain: ChainId, expectedChain: ChainId) => void;
 
@@ -215,7 +231,10 @@ export class WalletConnector {
       });
       return connection;
     } catch (error) {
-      const walletError = this.handleConnectionError(error, provider);
+      // Errors thrown above are already WalletErrors; only raw provider errors need mapping
+      const walletError = isWalletError(error)
+        ? error
+        : this.handleConnectionError(error, provider);
 
       this.updateSession({
         connection: null,
@@ -339,6 +358,9 @@ export class WalletConnector {
    * Set up wallet event listeners
    */
   private setupEventListeners(provider: EthereumProvider): void {
+    // Connecting again must not leave the previous connection's handlers attached
+    this.removeEventListeners();
+
     const handleAccountsChanged = (accounts: unknown): void => {
       const accountList = accounts as string[];
       if (accountList.length === 0) {
@@ -380,27 +402,24 @@ export class WalletConnector {
     this.eventHandlers.set('accountsChanged', handleAccountsChanged);
     this.eventHandlers.set('chainChanged', handleChainChanged);
     this.eventHandlers.set('disconnect', handleDisconnect);
+    this.listenedProvider = provider;
   }
 
   /**
    * Remove wallet event listeners
    */
   private removeEventListeners(): void {
-    const provider = this.session.connection?.provider;
+    const provider = this.listenedProvider;
     if (!provider) {
       return;
     }
 
-    const ethereumProvider = this.getEthereumProvider(provider);
-    if (!ethereumProvider) {
-      return;
-    }
-
     for (const [event, handler] of this.eventHandlers) {
-      ethereumProvider.removeListener(event, handler);
+      provider.removeListener(event, handler);
     }
 
     this.eventHandlers.clear();
+    this.listenedProvider = null;
   }
 
   /**

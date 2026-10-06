@@ -1,5 +1,13 @@
 import { GLWM, GLWMConfig } from '../../src';
 
+// Mock only the network layer: JsonRpcProvider is replaced, the rest of ethers is real
+jest.mock('ethers', () => ({
+  ...jest.requireActual<typeof import('ethers')>('ethers'),
+  JsonRpcProvider: jest.fn().mockImplementation(() => ({
+    getBlockNumber: jest.fn().mockResolvedValue(12345678),
+  })),
+}));
+
 describe('GLWM', () => {
   const validConfig: GLWMConfig = {
     licenseContract: '0x1234567890123456789012345678901234567890',
@@ -95,15 +103,9 @@ describe('GLWM', () => {
         states.push(state.status);
       });
 
-      // Initialize will fail due to no real RPC, but state transitions should still occur
-      try {
-        await glwm.initialize();
-      } catch {
-        // Expected to fail without real RPC connection
-      }
+      await glwm.initialize();
 
-      // Should have transitioned through at least 'initializing' state
-      expect(states).toContain('initializing');
+      expect(states).toEqual(['initializing', 'awaiting_wallet']);
     });
 
     it('should return unsubscribe function', () => {

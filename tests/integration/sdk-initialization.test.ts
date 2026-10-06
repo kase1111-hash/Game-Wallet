@@ -1,4 +1,18 @@
+import { JsonRpcProvider } from 'ethers';
 import { GLWM, GLWMConfig, LogLevel, Logger } from '../../src';
+
+// Mock only the network layer: JsonRpcProvider is replaced, the rest of ethers is real.
+// Use a mutable container to avoid jest.mock hoisting / TDZ issues
+const mockRpc = {
+  getBlockNumber: jest.fn<Promise<number>, []>(),
+};
+
+jest.mock('ethers', () => ({
+  ...jest.requireActual<typeof import('ethers')>('ethers'),
+  JsonRpcProvider: jest.fn().mockImplementation(() => ({
+    getBlockNumber: () => mockRpc.getBlockNumber(),
+  })),
+}));
 
 describe('SDK Initialization Integration', () => {
   const validConfig: GLWMConfig = {
@@ -21,6 +35,8 @@ describe('SDK Initialization Integration', () => {
 
   beforeEach(() => {
     Logger.resetInstance();
+    jest.mocked(JsonRpcProvider).mockClear();
+    mockRpc.getBlockNumber.mockReset().mockResolvedValue(12345678);
   });
 
   describe('Full SDK lifecycle', () => {
@@ -34,20 +50,43 @@ describe('SDK Initialization Integration', () => {
       const states: string[] = [];
       glwm.subscribe((state) => states.push(state.status));
 
-      // Initialize - this will fail because we can't connect to RPC in tests
-      // but we can test the state transitions
-      try {
-        await glwm.initialize();
-      } catch {
-        // Expected to fail without real RPC
-      }
+      await glwm.initialize();
 
-      // Should have transitioned through states
-      expect(states).toContain('initializing');
+      // Network.from() is real ethers, so this checks the actual chain and static-network setup
+      expect(JsonRpcProvider).toHaveBeenCalledWith(
+        'https://polygon-rpc.com',
+        expect.objectContaining({ chainId: 137n }),
+        { staticNetwork: expect.objectContaining({ chainId: 137n }) }
+      );
+      expect(states).toEqual(['initializing', 'awaiting_wallet']);
 
       // Dispose
       await glwm.dispose();
       expect(glwm.getState().status).toBe('uninitialized');
+    });
+
+    it('should enter error state when the RPC provider is unreachable', async () => {
+      mockRpc.getBlockNumber.mockRejectedValue(new Error('connect ECONNREFUSED'));
+      const glwm = new GLWM({
+        ...validConfig,
+        // Single attempt: retry/backoff is covered by the RPCProvider unit tests
+        rpcProvider: { ...validConfig.rpcProvider, retryAttempts: 1 },
+      });
+
+      const states: string[] = [];
+      glwm.subscribe((state) => states.push(state.status));
+
+      await expect(glwm.initialize()).rejects.toMatchObject({
+        code: 'RPC_ERROR',
+        message: 'Failed to connect to RPC provider',
+        recoverable: true,
+      });
+
+      expect(states).toEqual(['initializing', 'error']);
+      expect(glwm.getState()).toMatchObject({
+        status: 'error',
+        error: { code: 'RPC_ERROR' },
+      });
     });
 
     it('should handle configuration callbacks', () => {
@@ -74,14 +113,12 @@ describe('SDK Initialization Integration', () => {
 
       const unsubscribe = glwm.subscribe(listener);
 
-      // Trigger some state changes
-      try {
-        await glwm.initialize();
-      } catch {
-        // Expected
-      }
+      await glwm.initialize();
 
-      expect(listener).toHaveBeenCalled();
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(listener).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: 'awaiting_wallet' })
+      );
 
       unsubscribe();
     });
@@ -94,14 +131,10 @@ describe('SDK Initialization Integration', () => {
       glwm.subscribe(listener1);
       glwm.subscribe(listener2);
 
-      try {
-        await glwm.initialize();
-      } catch {
-        // Expected
-      }
+      await glwm.initialize();
 
-      expect(listener1).toHaveBeenCalled();
-      expect(listener2).toHaveBeenCalled();
+      expect(listener1).toHaveBeenCalledTimes(2);
+      expect(listener2).toHaveBeenCalledTimes(2);
     });
 
     it('should stop notifying after unsubscribe', async () => {
@@ -111,11 +144,7 @@ describe('SDK Initialization Integration', () => {
       const unsubscribe = glwm.subscribe(listener);
       unsubscribe();
 
-      try {
-        await glwm.initialize();
-      } catch {
-        // Expected
-      }
+      await glwm.initialize();
 
       // Listener should not be called after unsubscribe
       expect(listener).not.toHaveBeenCalled();
@@ -211,4 +240,3 @@ describe('Logger Integration', () => {
     expect(logger.getConfig().level).toBe(LogLevel.ERROR);
   });
 });
-

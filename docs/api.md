@@ -20,7 +20,7 @@ const glwm = new GLWM(config);
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `initialize()` | `async initialize(): Promise<void>` | Connects to RPC provider, transitions to `awaiting_wallet` |
+| `initialize()` | `async initialize(): Promise<void>` | Connects to RPC provider, transitions to `awaiting_wallet`. Called again (e.g. to retry after an error), it first releases the previous session: disconnects a connected wallet (`WALLET_DISCONNECTED` fires) and closes an open minting portal. Other methods called while it runs are rejected with `CONFIGURATION_ERROR` |
 | `dispose()` | `async dispose(): Promise<void>` | Disconnects wallet, cleans up resources |
 | `getState()` | `getState(): GLWMState` | Returns current SDK state |
 | `subscribe()` | `subscribe(listener: (state: GLWMState) => void): () => void` | Subscribe to state changes; returns unsubscribe fn |
@@ -30,8 +30,8 @@ const glwm = new GLWM(config);
 | `getWalletSession()` | `getWalletSession(): WalletSession` | Get current wallet session info |
 | `verifyLicense()` | `async verifyLicense(address?: string): Promise<LicenseVerificationResult>` | Verify NFT license ownership |
 | `verifyAndPlay()` | `async verifyAndPlay(provider?: WalletProvider): Promise<LicenseVerificationResult>` | Connect + verify in one call; opens portal if no license |
-| `openMintingPortal()` | `openMintingPortal(): void` | Opens the minting portal (iframe or redirect) |
-| `closeMintingPortal()` | `closeMintingPortal(): void` | Closes the minting portal |
+| `openMintingPortal()` | `async openMintingPortal(): Promise<void>` | Opens the minting portal (iframe or redirect); the state becomes `minting_portal_open` once it is open. If it cannot open, the state is unchanged and the error is thrown |
+| `closeMintingPortal()` | `closeMintingPortal(): void` | Closes the minting portal; does nothing if it is not open |
 | `getAvailableProviders()` | `getAvailableProviders(): WalletProvider[]` | List detected wallet providers |
 | `isProviderAvailable()` | `isProviderAvailable(provider: WalletProvider): boolean` | Check if a specific provider is available |
 | `clearCache()` | `clearCache(): void` | Clear the verification cache |
@@ -111,6 +111,8 @@ type GLWMState =
   | { status: 'minting_in_progress'; transactionHash: string }
   | { status: 'error'; error: GLWMError };
 ```
+
+The minting states (`minting_portal_open`, `minting_in_progress`) are reported only while the minting portal is open. If the SDK is in a minting state when the portal closes, however it closes (close button, overlay click, the portal's `PORTAL_CLOSED` message, auto-close after a mint, the 10-minute `verifyAndPlay()` timeout, `closeMintingPortal()`), the state becomes `no_license` if a wallet is connected, else `awaiting_wallet`. A state reached while the portal was open (for example `license_valid` from `verifyLicense()`, or `error`) is kept. The state changes first, then `CLOSE_MINTING_PORTAL` fires, then `mintingPortal.onClose` runs.
 
 ### WalletProvider
 
@@ -215,7 +217,7 @@ interface GLWMError {
 
 | Code | Recoverable | Description |
 |------|:-----------:|-------------|
-| `WALLET_NOT_FOUND` | yes | Wallet provider not detected |
+| `WALLET_NOT_FOUND` | no | Wallet provider not detected |
 | `WALLET_CONNECTION_REJECTED` | yes | User rejected connection |
 | `WALLET_DISCONNECTED` | yes | Wallet disconnected unexpectedly |
 | `CHAIN_MISMATCH` | yes | Wrong chain, needs switch |
