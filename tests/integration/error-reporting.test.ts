@@ -3,16 +3,16 @@
  */
 
 /**
- * Integration tests for config.onError
+ * Integration tests for error reporting: config.onError and the 'ERROR' event
  *
  * The documented contract is that onError is "called on any error". Each test
- * asserts it fires exactly once, with the error the SDK surfaces, for errors
- * GLWM creates itself and for errors coming from its components (RPC, wallet,
- * license verifier, minting portal).
+ * asserts that onError and the 'ERROR' event each fire exactly once, with the
+ * same error object, for errors GLWM creates itself and for errors coming from
+ * its components (RPC, wallet, license verifier, minting portal).
  */
 
 import { GLWM } from '../../src/GLWM';
-import type { GLWMConfig, GLWMError } from '../../src/types';
+import type { GLWMConfig, GLWMError, GLWMEvent } from '../../src/types';
 import { Logger } from '../../src/utils/Logger';
 import { MockEthereumProvider } from '../mocks/ethereum-provider';
 import { createMockMetadata } from '../mocks/license-contract';
@@ -98,20 +98,30 @@ const rpcDown = (): Error => new Error('connect ECONNREFUSED');
 describe('onError reporting', () => {
   let sdk: GLWM;
   let onError: jest.Mock<void, [GLWMError]>;
+  let errorEvents: jest.Mock<void, [Extract<GLWMEvent, { type: 'ERROR' }>]>;
 
-  /** Create the SDK with an onError spy that also records the SDK state at call time */
+  /**
+   * Create the SDK with an onError spy (which also records the SDK state at call time)
+   * and an 'ERROR' event handler
+   */
   function createSdk(overrides: Partial<GLWMConfig> = {}): { statusAtCall: string[] } {
     const statusAtCall: string[] = [];
     onError = jest.fn((_error: GLWMError) => {
       statusAtCall.push(sdk.getState().status);
     });
+    errorEvents = jest.fn();
     sdk = new GLWM(createConfig({ onError, ...overrides }));
+    sdk.on('ERROR', errorEvents);
     return { statusAtCall };
   }
 
+  /** onError and the 'ERROR' event each fired once, with the same error object */
   function expectReportedOnce(code: GLWMError['code']): void {
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code }));
+    expect(errorEvents).toHaveBeenCalledTimes(1);
+    expect(errorEvents.mock.calls[0]?.[0]).toEqual({ type: 'ERROR', error: expect.anything() });
+    expect(errorEvents.mock.calls[0]?.[0].error).toBe(onError.mock.calls[0]?.[0]);
   }
 
   beforeEach(() => {
@@ -143,6 +153,7 @@ describe('onError reporting', () => {
 
     expect(result.isValid).toBe(true);
     expect(onError).not.toHaveBeenCalled();
+    expect(errorEvents).not.toHaveBeenCalled();
   });
 
   describe('errors from SDK components', () => {
@@ -187,6 +198,8 @@ describe('onError reporting', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError.mock.calls[0]?.[0]).toBe(thrown);
+      expect(errorEvents).toHaveBeenCalledTimes(1);
+      expect(errorEvents.mock.calls[0]?.[0].error).toBe(thrown);
     });
 
     it('verifyLicense(): RPC failure during verification', async () => {
@@ -350,6 +363,50 @@ describe('onError reporting', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(sdk.getState().status).toBe('error');
+    });
+  });
+
+  describe("'ERROR' event", () => {
+    it('fires when no onError callback is configured', async () => {
+      mockState.getBlockNumber.mockRejectedValue(rpcDown());
+      sdk = new GLWM(createConfig());
+      const handler = jest.fn();
+      sdk.on('ERROR', handler);
+
+      const thrown = await sdk.initialize().catch((error: GLWMError) => error);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith({ type: 'ERROR', error: thrown });
+    });
+
+    it('a throwing handler does not stop other handlers, onError, or the error state', async () => {
+      mockState.getBlockNumber.mockRejectedValue(rpcDown());
+      createSdk();
+      const failing = jest.fn(() => {
+        throw new Error('bug in an app handler');
+      });
+      const later = jest.fn();
+      sdk.on('ERROR', failing);
+      sdk.on('ERROR', later);
+
+      await expect(sdk.initialize()).rejects.toMatchObject({ code: 'RPC_ERROR' });
+
+      expect(failing).toHaveBeenCalledTimes(1);
+      expect(later).toHaveBeenCalledTimes(1);
+      expectReportedOnce('RPC_ERROR');
+      expect(sdk.getState().status).toBe('error');
+    });
+
+    it('stops firing after unsubscribe', async () => {
+      mockState.getBlockNumber.mockRejectedValue(rpcDown());
+      createSdk();
+      const handler = jest.fn();
+      const unsubscribe = sdk.on('ERROR', handler);
+      unsubscribe();
+
+      await expect(sdk.initialize()).rejects.toMatchObject({ code: 'RPC_ERROR' });
+
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 });

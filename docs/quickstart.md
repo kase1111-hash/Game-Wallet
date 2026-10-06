@@ -135,6 +135,11 @@ glwm.on('LICENSE_VERIFIED', (event) => {
 glwm.on('MINT_COMPLETED', (event) => {
   console.log('Mint result:', event.result);
 });
+
+// Fires once for every error the SDK surfaces, alongside the onError callback
+glwm.on('ERROR', (event) => {
+  console.error('GLWM error:', event.error.code, event.error.message);
+});
 ```
 
 ## Minting Portal Protocol

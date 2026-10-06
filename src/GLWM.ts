@@ -58,7 +58,7 @@ export class GLWM {
   private mintingPortal: MintingPortal | null = null;
   private cache: Cache | null = null;
 
-  // Errors already passed to config.onError, so each is reported exactly once
+  // Errors already reported (ERROR event + config.onError), so each is reported exactly once
   private readonly reportedErrors = new WeakSet<GLWMError>();
 
   private static readonly VERSION = '0.1.0';
@@ -562,15 +562,15 @@ export class GLWM {
   }
 
   /**
-   * Create an error and report it through config.onError
+   * Create an error and report it (ERROR event + config.onError)
    */
   private createError(code: GLWMError['code'], message: string, recoverable = true): GLWMError {
     return this.reportError({ code, message, recoverable });
   }
 
   /**
-   * Pass an error to config.onError, once per error object. A throwing callback is logged
-   * rather than allowed to replace the SDK error or interrupt its state handling.
+   * Emit the ERROR event and call config.onError, once per error object. A throwing listener
+   * is logged rather than allowed to replace the SDK error or interrupt its state handling.
    */
   private reportError<E extends GLWMError>(error: E): E {
     if (this.reportedErrors.has(error)) {
@@ -578,14 +578,22 @@ export class GLWM {
     }
     this.reportedErrors.add(error);
 
+    const event: GLWMEvent = { type: 'ERROR', error };
+    for (const handler of this.eventHandlers.get('ERROR') ?? []) {
+      this.runErrorListener('ERROR event handler', () => handler(event));
+    }
+    this.runErrorListener('onError callback', () => this.config.onError?.(error));
+    return error;
+  }
+
+  private runErrorListener(name: string, listener: () => void): void {
     try {
-      this.config.onError?.(error);
-    } catch (callbackError) {
-      logger.error('onError callback threw', {
-        error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+      listener();
+    } catch (listenerError) {
+      logger.error(`${name} threw`, {
+        error: listenerError instanceof Error ? listenerError.message : String(listenerError),
       });
     }
-    return error;
   }
 
   /**
