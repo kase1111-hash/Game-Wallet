@@ -58,6 +58,9 @@ export class GLWM {
   private mintingPortal: MintingPortal | null = null;
   private cache: Cache | null = null;
 
+  // Errors already passed to config.onError, so each is reported exactly once
+  private readonly reportedErrors = new WeakSet<GLWMError>();
+
   private static readonly VERSION = '0.1.0';
 
   constructor(config: GLWMConfig) {
@@ -98,11 +101,10 @@ export class GLWM {
           }
         },
         onChainMismatch: (current, expected) => {
-          const error = this.createError(
+          this.createError(
             'CHAIN_MISMATCH',
             `Connected to chain ${current}, but expected ${expected}`
           );
-          this.config.onError?.(error);
         },
       });
 
@@ -118,6 +120,9 @@ export class GLWM {
         },
         onMintCompleted: (result) => {
           this.emitEvent({ type: 'MINT_COMPLETED', result });
+          if (!result.success && result.error) {
+            this.reportError(result.error);
+          }
         },
         onClose: () => {
           this.emitEvent({ type: 'CLOSE_MINTING_PORTAL' });
@@ -128,7 +133,7 @@ export class GLWM {
     } catch (error) {
       const glwmError = this.handleError(error);
       this.setState({ status: 'error', error: glwmError });
-      throw glwmError;
+      throw this.reportError(glwmError);
     }
   }
 
@@ -237,7 +242,7 @@ export class GLWM {
     } catch (error) {
       const glwmError = this.handleError(error);
       this.setState({ status: 'error', error: glwmError });
-      throw glwmError;
+      throw this.reportError(glwmError);
     }
   }
 
@@ -305,7 +310,7 @@ export class GLWM {
    */
   async switchChain(chainId: ChainId): Promise<void> {
     this.ensureInitialized();
-    await this.walletConnector!.switchChain(chainId);
+    await this.withErrorReporting(() => this.walletConnector!.switchChain(chainId));
   }
 
   // ============================================
@@ -354,7 +359,7 @@ export class GLWM {
     } catch (error) {
       const glwmError = this.handleError(error);
       this.setState({ status: 'error', error: glwmError });
-      throw glwmError;
+      throw this.reportError(glwmError);
     }
   }
 
@@ -374,7 +379,7 @@ export class GLWM {
    */
   async checkLicenseForAddress(address: string): Promise<LicenseVerificationResult> {
     this.ensureInitialized();
-    return this.licenseVerifier!.verifyLicense(address);
+    return this.withErrorReporting(() => this.licenseVerifier!.verifyLicense(address));
   }
 
   /**
@@ -382,7 +387,7 @@ export class GLWM {
    */
   async getLicenseDetails(tokenId: string): Promise<LicenseNFT> {
     this.ensureInitialized();
-    return this.licenseVerifier!.getLicenseById(tokenId);
+    return this.withErrorReporting(() => this.licenseVerifier!.getLicenseById(tokenId));
   }
 
   /**
@@ -397,7 +402,8 @@ export class GLWM {
       throw this.createError('WALLET_DISCONNECTED', 'No wallet connected');
     }
 
-    return this.licenseVerifier!.getAllLicenses(session.connection.address);
+    const address = session.connection.address;
+    return this.withErrorReporting(() => this.licenseVerifier!.getAllLicenses(address));
   }
 
   // ============================================
@@ -413,7 +419,7 @@ export class GLWM {
     this.setState({ status: 'minting_portal_open' });
     this.emitEvent({ type: 'OPEN_MINTING_PORTAL' });
 
-    await this.mintingPortal!.open();
+    await this.withErrorReporting(() => this.mintingPortal!.open());
   }
 
   /**
@@ -555,16 +561,47 @@ export class GLWM {
     }
   }
 
+  /**
+   * Create an error and report it through config.onError
+   */
   private createError(code: GLWMError['code'], message: string, recoverable = true): GLWMError {
-    const error: GLWMError = {
-      code,
-      message,
-      recoverable,
-    };
-    this.config.onError?.(error);
+    return this.reportError({ code, message, recoverable });
+  }
+
+  /**
+   * Pass an error to config.onError, once per error object. A throwing callback is logged
+   * rather than allowed to replace the SDK error or interrupt its state handling.
+   */
+  private reportError<E extends GLWMError>(error: E): E {
+    if (this.reportedErrors.has(error)) {
+      return error;
+    }
+    this.reportedErrors.add(error);
+
+    try {
+      this.config.onError?.(error);
+    } catch (callbackError) {
+      logger.error('onError callback threw', {
+        error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+      });
+    }
     return error;
   }
 
+  /**
+   * Run an operation and report any error it throws before rethrowing it as a GLWMError
+   */
+  private async withErrorReporting<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      throw this.reportError(this.handleError(error));
+    }
+  }
+
+  /**
+   * Normalize a thrown value to a GLWMError (without reporting it)
+   */
   private handleError(error: unknown): GLWMError {
     if (this.isGLWMError(error)) {
       logger.error(`${error.code}: ${error.message}`);
@@ -576,7 +613,7 @@ export class GLWM {
 
     // Classify the error based on message content
     const code = this.classifyError(message);
-    return this.createError(code, message);
+    return { code, message, recoverable: true };
   }
 
   private classifyError(message: string): GLWMError['code'] {
