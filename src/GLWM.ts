@@ -37,6 +37,18 @@ function describeError(error: unknown): string {
   return error instanceof Error ? (error.stack ?? error.message) : String(error);
 }
 
+/**
+ * Whether a verification result is a verdict about the license: valid, `no_license_found` or
+ * `license_expired`. LicenseVerifier returns nothing else (a failed verification is thrown), but
+ * earlier SDK versions cached failures as `verification_failed` / `contract_paused` results in
+ * localStorage, where one can still be found until it expires.
+ */
+function isLicenseVerdict(result: LicenseVerificationResult): boolean {
+  return (
+    result.isValid || result.reason === 'no_license_found' || result.reason === 'license_expired'
+  );
+}
+
 const DEFAULT_CACHE_CONFIG: CacheConfig = {
   enabled: true,
   ttlSeconds: 300, // 5 minutes
@@ -78,6 +90,10 @@ export class GLWM {
   // An openMintingPortal() still in progress, shared by concurrent calls (e.g. a double-click)
   private portalOpening: Promise<void> | null = null;
 
+  // Bumped by initialize() and dispose(), so that a verification started before them cannot
+  // change the state of (or cache into) the session that follows
+  private sessionId = 0;
+
   private static readonly VERSION = '0.1.0';
 
   constructor(config: GLWMConfig) {
@@ -97,6 +113,7 @@ export class GLWM {
    * Must be called before any other methods
    */
   async initialize(): Promise<void> {
+    this.sessionId++;
     this.setState({ status: 'initializing' });
 
     try {
@@ -188,6 +205,7 @@ export class GLWM {
    * Clean up resources, disconnect wallet, close portals
    */
   async dispose(): Promise<void> {
+    this.sessionId++;
     await this.disconnectWallet();
     this.mintingPortal?.close();
     this.stateListeners.clear();
@@ -207,6 +225,11 @@ export class GLWM {
   /**
    * Primary method: Verify license and start game if valid
    * Handles the full flow: wallet -> verify -> mint if needed -> verify again
+   *
+   * The minting portal opens only for a verdict that the wallet has no valid license
+   * (`no_license_found` or `license_expired`). If the license cannot be verified, before or after
+   * the portal (an RPC call fails: `RPC_ERROR`; the license contract is paused:
+   * `CONTRACT_ERROR`), this rejects with that error, as verifyLicense() does.
    *
    * @returns Promise resolving when game should start
    * @throws GLWMError if flow cannot complete
@@ -231,7 +254,12 @@ export class GLWM {
     }
 
     // Verify license
+    const sessionId = this.sessionId;
     const result = await this.verifyLicense();
+    if (sessionId !== this.sessionId) {
+      // initialize() or dispose() ran meanwhile: don't act on the previous session's answer
+      return result;
+    }
 
     if (result.isValid) {
       if (result.license) {
@@ -254,7 +282,7 @@ export class GLWM {
     // After minting portal closes, verify again
     const postMintResult = await this.verifyLicenseFresh();
 
-    if (postMintResult.isValid && postMintResult.license) {
+    if (postMintResult.isValid && postMintResult.license && sessionId === this.sessionId) {
       this.setState({ status: 'license_valid', license: postMintResult.license });
     }
 
@@ -385,6 +413,11 @@ export class GLWM {
   /**
    * Verify license ownership for connected wallet
    * Uses cache if available and not expired
+   *
+   * Resolves with a verdict: valid, `no_license_found` or `license_expired`. If the license
+   * cannot be verified (an RPC call fails: `RPC_ERROR`; the license contract is paused:
+   * `CONTRACT_ERROR`), the error is reported (ERROR event + onError) and thrown, the state
+   * becomes 'error', and nothing is cached.
    */
   async verifyLicense(): Promise<LicenseVerificationResult> {
     this.ensureInitialized();
@@ -397,16 +430,24 @@ export class GLWM {
     const address = session.connection.address;
     this.setState({ status: 'verifying_license', address });
 
-    // Check cache first
+    // Check cache first. Only a verdict is reused: a failure cached by an earlier SDK version is
+    // verified again (this version never caches one: verifyLicense() throws it)
     const cached = this.cache?.getVerification(address);
-    if (cached) {
+    if (cached && isLicenseVerdict(cached)) {
       this.emitEvent({ type: 'LICENSE_VERIFIED', result: cached });
       this.config.onLicenseVerified?.(cached);
       return cached;
     }
 
+    const sessionId = this.sessionId;
     try {
-      const result = await this.licenseVerifier!.verifyLicense(address);
+      const result = await this.requestVerdict(address);
+
+      if (sessionId !== this.sessionId) {
+        // initialize() or dispose() ran meanwhile: this answer belongs to the previous session,
+        // so it must not be cached in, or change the state of, the new one
+        return result;
+      }
 
       // Cache the result
       this.cache?.setVerification(address, result);
@@ -423,6 +464,10 @@ export class GLWM {
       return result;
     } catch (error) {
       const glwmError = this.handleError(error);
+      if (sessionId !== this.sessionId) {
+        // As above: report the failure, but leave the new session's state alone
+        throw this.reportError(glwmError);
+      }
       try {
         this.setState({ status: 'error', error: glwmError });
       } finally {
@@ -445,10 +490,13 @@ export class GLWM {
 
   /**
    * Check license for arbitrary address (read-only)
+   *
+   * Resolves with a verdict, like verifyLicense(). If the license cannot be verified, the error
+   * is reported and thrown; the SDK state and the cache are not changed.
    */
   async checkLicenseForAddress(address: string): Promise<LicenseVerificationResult> {
     this.ensureInitialized();
-    return this.withErrorReporting(() => this.licenseVerifier!.verifyLicense(address));
+    return this.withErrorReporting(() => this.requestVerdict(address));
   }
 
   /**
@@ -765,6 +813,27 @@ export class GLWM {
     } catch (releaseError) {
       logger.error(`Releasing the previous ${name} threw`, { error: describeError(releaseError) });
     }
+  }
+
+  /**
+   * Verify an address with LicenseVerifier, accepting only a verdict about the license.
+   *
+   * LicenseVerifier throws a verification that cannot complete. Anything else that is not a
+   * verdict (e.g. the deprecated 'verification_failed' or 'wrong_chain' reasons, or no reason)
+   * is thrown here as VERIFICATION_FAILED, so it can never be cached as, or acted on as, "no
+   * license". The error is returned unreported: the caller reports it.
+   */
+  private async requestVerdict(address: string): Promise<LicenseVerificationResult> {
+    const result = await this.licenseVerifier!.verifyLicense(address);
+    if (!isLicenseVerdict(result)) {
+      throw {
+        code: 'VERIFICATION_FAILED',
+        message: `The license could not be verified (${result.reason ?? 'no reason given'})`,
+        details: { reason: result.reason ?? null },
+        recoverable: true,
+      } satisfies GLWMError;
+    }
+    return result;
   }
 
   /**

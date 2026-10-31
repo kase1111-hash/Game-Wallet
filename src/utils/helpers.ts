@@ -84,3 +84,51 @@ export async function retryWithBackoff<T>(
 
   throw lastError ?? new Error('Retry failed');
 }
+
+/**
+ * A JSON-safe summary of an error, for GLWMError.details. Raw errors can hold values that
+ * JSON.stringify() rejects (an ethers CALL_EXCEPTION carries BigInt call arguments), and apps
+ * commonly log or send `details` from onError.
+ */
+export interface ErrorSummary {
+  message: string;
+  name?: string;
+  code?: string | number;
+  shortMessage?: string;
+  reason?: string;
+}
+
+export function summarizeError(error: unknown): ErrorSummary {
+  if (typeof error !== 'object' || error === null) {
+    return { message: String(error) };
+  }
+  // A getter that throws (some error classes compute fields lazily) must not escape from here
+  const read = (key: string): unknown => {
+    try {
+      return (error as Record<string, unknown>)[key];
+    } catch {
+      return undefined;
+    }
+  };
+  const message = read('message');
+  const summary: ErrorSummary = {
+    message: typeof message === 'string' ? message : 'Unknown error',
+  };
+  const name = read('name');
+  if (typeof name === 'string') {
+    summary.name = name;
+  }
+  const code = read('code');
+  if (typeof code === 'string' || typeof code === 'number') {
+    summary.code = code;
+  }
+  const shortMessage = read('shortMessage');
+  if (typeof shortMessage === 'string') {
+    summary.shortMessage = shortMessage;
+  }
+  const reason = read('reason');
+  if (typeof reason === 'string') {
+    summary.reason = reason;
+  }
+  return summary;
+}

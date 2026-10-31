@@ -28,7 +28,7 @@ if (result.isValid) {
 }
 ```
 
-`verifyAndPlay()` handles the entire flow: connect wallet, check license, open minting portal if needed, re-verify after mint.
+`verifyAndPlay()` handles the entire flow: connect wallet, check license, open minting portal if needed, re-verify after mint. If the license cannot be checked (an RPC failure, or a paused license contract), it rejects with `RPC_ERROR` / `CONTRACT_ERROR` instead of offering a mint.
 
 ## Configuration
 
@@ -92,9 +92,9 @@ if (result.isValid) {
 | Method | Description |
 |--------|-------------|
 | `verifyAndPlay()` | Full flow: connect, verify, mint if needed |
-| `verifyLicense()` | Verify license for connected wallet (uses cache) |
+| `verifyLicense()` | Verify license for connected wallet (uses cache); rejects if the check cannot complete |
 | `verifyLicenseFresh()` | Verify license bypassing cache |
-| `checkLicenseForAddress(addr)` | Check license for any address (read-only) |
+| `checkLicenseForAddress(addr)` | Check license for any address (read-only); rejects if the check cannot complete |
 | `getLicenseDetails(tokenId)` | Get full license metadata |
 | `getAllLicenses()` | Get all licenses owned by connected wallet |
 
@@ -123,7 +123,7 @@ if (result.isValid) {
 | `WALLET_DISCONNECTED` | Yes | Wallet not connected |
 | `CHAIN_MISMATCH` | Yes | Connected to wrong chain |
 | `RPC_ERROR` | Yes | RPC call failed after retries |
-| `CONTRACT_ERROR` | No | License contract error |
+| `CONTRACT_ERROR` | No (Yes if the contract is paused) | License contract error, or the contract is paused |
 | `NETWORK_ERROR` | Yes | General network failure |
 | `USER_CANCELLED` | Yes | User cancelled an action |
 

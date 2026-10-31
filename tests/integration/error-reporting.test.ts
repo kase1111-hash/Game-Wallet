@@ -212,6 +212,32 @@ describe('onError reporting', () => {
       expect(statusAtCall).toEqual(['error']);
     });
 
+    it('verifyLicense(): a contract read fails (balanceOf)', async () => {
+      setupMockWallet();
+      const { statusAtCall } = createSdk();
+      await sdk.initialize();
+      await sdk.connectWallet('metamask');
+      mockState.balanceOf.mockRejectedValue(rpcDown());
+
+      await expect(sdk.verifyLicense()).rejects.toMatchObject({ code: 'RPC_ERROR' });
+
+      expectReportedOnce('RPC_ERROR');
+      expect(statusAtCall).toEqual(['error']);
+    });
+
+    it('checkLicenseForAddress(): a contract read fails, without entering the error state', async () => {
+      createSdk();
+      await sdk.initialize();
+      mockState.balanceOf.mockRejectedValue(rpcDown());
+
+      await expect(sdk.checkLicenseForAddress(WALLET_ADDRESS)).rejects.toMatchObject({
+        code: 'RPC_ERROR',
+      });
+
+      expectReportedOnce('RPC_ERROR');
+      expect(sdk.getState().status).toBe('awaiting_wallet');
+    });
+
     it('switchChain(): chain not configured in the wallet', async () => {
       setupMockWallet().simulateSwitchChainError(4902);
       createSdk();

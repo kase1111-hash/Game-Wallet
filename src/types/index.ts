@@ -54,6 +54,10 @@ export interface LicenseAttributes {
 
 export type LicenseEdition = 'standard' | 'deluxe' | 'ultimate' | 'founders' | 'limited';
 
+/**
+ * A verdict about a license: valid, or invalid with a `reason`. A verification that could not
+ * complete is not a verdict; it is thrown as a GLWMError instead (see LicenseInvalidReason).
+ */
 export interface LicenseVerificationResult {
   isValid: boolean;
   license: LicenseNFT | null;
@@ -62,6 +66,18 @@ export interface LicenseVerificationResult {
   reason?: LicenseInvalidReason;
 }
 
+/**
+ * Why a license is not valid. Only two reasons are produced:
+ * - `no_license_found`: the address owns no license token
+ * - `license_expired`: the address's license has expired
+ *
+ * Deprecated: `contract_paused` and `verification_failed` are no longer produced. A verification
+ * that cannot complete says nothing about the license, so it is thrown as a GLWMError instead:
+ * `RPC_ERROR` when an RPC call fails, `CONTRACT_ERROR` when the license contract is paused. They
+ * stay in this type so that code checking for them still compiles, and will be removed in a future
+ * breaking release. `wrong_chain` is not produced either (a wallet on the wrong chain is reported
+ * as `CHAIN_MISMATCH`).
+ */
 export type LicenseInvalidReason =
   | 'no_license_found'
   | 'license_expired'

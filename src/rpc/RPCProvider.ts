@@ -1,6 +1,7 @@
 import { JsonRpcProvider, Network } from 'ethers';
 import type { RPCConfig, ChainId, GLWMError } from '../types';
 import { Logger } from '../utils/Logger';
+import { summarizeError } from '../utils/helpers';
 
 const logger = Logger.getInstance().child('RPCProvider');
 
@@ -91,7 +92,9 @@ export class RPCProvider {
 
     throw this.createError(
       'RPC_ERROR',
-      `RPC call failed after ${maxAttempts} attempts: ${lastError?.message ?? 'Unknown error'}`
+      `RPC call failed after ${maxAttempts} attempts: ${lastError?.message ?? 'Unknown error'}`,
+      // A JSON-safe summary of the last underlying error (e.g. the ethers error's code and reason)
+      lastError ? summarizeError(lastError) : undefined
     );
   }
 
@@ -249,11 +252,16 @@ export class RPCProvider {
   /**
    * Create a GLWM error
    */
-  private createError(code: GLWMError['code'], message: string): GLWMError {
+  private createError(code: GLWMError['code'], message: string, details?: unknown): GLWMError {
     return {
       code,
       message,
+      ...(details !== undefined && { details }),
       recoverable: code === 'RPC_ERROR',
+      ...(code === 'RPC_ERROR' && {
+        suggestedAction:
+          'Try again. If it keeps failing, check the RPC provider configuration (or add fallbackUrls).',
+      }),
     };
   }
 }
